@@ -1,0 +1,11 @@
+/build/
+/emulator/target/
+/.pytest_cache/
+/.Xil/
+/clockInfo.txt
+__pycache__/
+*.pyc
+*.vcd
+*.fst
+/core
+core.*
