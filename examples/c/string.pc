@@ -1,0 +1,10 @@
+char message[] = "PynqC string";
+
+int main() {
+    char *pointer = message;
+    puts(pointer);
+    putchar(' ');
+    print_int(strlen(pointer));
+    putchar('\n');
+    return 0;
+}

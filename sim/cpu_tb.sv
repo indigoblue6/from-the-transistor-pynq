@@ -13,8 +13,11 @@ module cpu_tb;
     logic debug_register_write;
     string memory_file;
     string expected;
+    string output_file;
+    string register_file;
     string actual = "";
-    integer cycles;
+    integer cycles, max_cycles, output_descriptor, register_descriptor, register_index;
+    logic [31:0] register_shadow [0:15];
 
     always #5 clk = ~clk;
 
@@ -34,20 +37,48 @@ module cpu_tb;
             $fatal(1, "MEM引数がありません");
         if (!$value$plusargs("EXPECT=%s", expected))
             expected = "";
+        if (!$value$plusargs("MAX_CYCLES=%d", max_cycles))
+            max_cycles = 2000000;
+        output_descriptor = 0;
+        if ($value$plusargs("OUTPUT_FILE=%s", output_file)) begin
+            output_descriptor = $fopen(output_file, "wb");
+            if (output_descriptor == 0)
+                $fatal(1, "出力ファイルを開けません: %s", output_file);
+        end
+        for (register_index = 0; register_index < 16; register_index = register_index + 1)
+            register_shadow[register_index] = 32'b0;
+        register_shadow[15] = 32'h0001_0000;
+        register_descriptor = 0;
+        if ($value$plusargs("REGISTER_FILE=%s", register_file)) begin
+            register_descriptor = $fopen(register_file, "w");
+            if (register_descriptor == 0)
+                $fatal(1, "レジスタファイルを開けません: %s", register_file);
+        end
         #1 $readmemh(memory_file, memory_i.instruction_memory);
         repeat (3) @(posedge clk);
         reset <= 1'b0;
-        for (cycles = 0; cycles < 20000; cycles = cycles + 1) begin
+        for (cycles = 0; cycles < max_cycles; cycles = cycles + 1) begin
             @(posedge clk);
+            if (debug_register_write && debug_register_index != 0)
+                register_shadow[debug_register_index] = debug_register_data;
             if (uart_valid) begin
                 actual = {actual, uart_data};
                 $write("%c", uart_data);
+                if (output_descriptor != 0)
+                    $fwrite(output_descriptor, "%c", uart_data);
             end
             if (faulted)
                 $fatal(1, "CPU fault: PC=%08x IR=%08x state=%0d", debug_pc, debug_instruction, debug_state);
             if (sim_exit_valid && sim_exit_code != 0)
                 $fatal(1, "SIM_EXIT失敗: %0d", sim_exit_code);
             if (halted || sim_exit_valid) begin
+                if (register_descriptor != 0) begin
+                    for (register_index = 0; register_index < 16; register_index = register_index + 1)
+                        $fwrite(register_descriptor, "%08x\n", register_shadow[register_index]);
+                    $fclose(register_descriptor);
+                end
+                if (output_descriptor != 0)
+                    $fclose(output_descriptor);
                 if (expected != "" && actual != expected)
                     $fatal(1, "出力不一致: actual='%s' expected='%s'", actual, expected);
                 $display("RTLテスト成功（%0d cycles）", cycles);

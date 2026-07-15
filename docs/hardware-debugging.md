@@ -88,3 +88,9 @@ cargo run --manifest-path emulator/Cargo.toml -- build/hello.bin --trace --dump-
 
 RTL変更後は必ず`make test`を先に通し、その後`make hardware-test`を実行する。実機を利用できない
 状態ではFPGA関連変更を完了扱いにしない。
+
+## PynqCプログラムの実機デバッグ
+
+`make hardware-c-test`は`examples/c/hardware.pc`をコンパイルし、生成MEMを命令BRAMへ組み込み、
+書込み後にILAでUART履歴、halt、faultを検証する。コンパイラ出力を調べる場合は
+`make compile PROGRAM=hardware`後に`build/c_hardware.s`、`.bin`、`.mem`を順に確認する。

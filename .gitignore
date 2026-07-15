@@ -1,5 +1,6 @@
 /build/
 /emulator/target/
+/compiler/target/
 /.pytest_cache/
 /.Xil/
 /clockInfo.txt

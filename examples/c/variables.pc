@@ -1,0 +1,12 @@
+int main() {
+    int value = 40;
+    {
+        int value = 2;
+        print_int(value);
+        putchar(' ');
+    }
+    value += 2;
+    print_int(value);
+    putchar('\n');
+    return 0;
+}

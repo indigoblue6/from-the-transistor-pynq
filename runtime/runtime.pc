@@ -1,0 +1,2 @@
+void panic(char *message);
+void print_int(int value);

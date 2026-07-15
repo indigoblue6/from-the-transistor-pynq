@@ -1,0 +1,4 @@
+int main() {
+    puts("Hello, PYNQ CPU!\n");
+    return 0;
+}

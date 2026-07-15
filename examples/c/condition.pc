@@ -1,0 +1,10 @@
+int main() {
+    int x = 42;
+    int touched = 0;
+    if (x >= 40 && x <= 42 && (1 || (touched = 1))) {
+        puts("COND OK\n");
+    } else {
+        puts("COND NG\n");
+    }
+    return touched;
+}
