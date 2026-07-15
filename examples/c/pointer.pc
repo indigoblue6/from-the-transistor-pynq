@@ -1,0 +1,8 @@
+int main() {
+    int value = 10;
+    int *pointer = &value;
+    *pointer = *pointer + 32;
+    print_int(value);
+    putchar('\n');
+    return 0;
+}

@@ -1,0 +1,12 @@
+int answer = 42;
+int zero;
+char letter = 'G';
+char *message_pointer = "LOBAL OK\n";
+
+int main() {
+    putchar(letter);
+    puts(message_pointer);
+    print_int(answer + zero);
+    putchar('\n');
+    return 0;
+}

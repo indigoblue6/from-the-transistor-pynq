@@ -1,0 +1,3 @@
+int __mulsi3(int lhs, int rhs);
+int __divsi3(int lhs, int rhs);
+int __modsi3(int lhs, int rhs);

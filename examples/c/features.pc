@@ -1,0 +1,18 @@
+int double_value(int value);
+
+int main() {
+    char text[] = "AB";
+    int values[3];
+    int *pointer = values;
+    int result = sizeof(text) + sizeof(values) + ((pointer + 2) - pointer);
+    while (1) {
+        break;
+    }
+    print_int(double_value(result));
+    putchar('\n');
+    return 0;
+}
+
+int double_value(int value) {
+    return value * 2;
+}

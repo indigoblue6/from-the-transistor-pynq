@@ -73,6 +73,31 @@ make hardware-uart-test PORT=/dev/ttyUSB2
 
 ## ロードマップ
 
-次フェーズでは字句解析・構文解析、型検査、ABI準拠コード生成、スタックフレーム、リンカを
-実装する。その後、割り込み・タイマー・GPIO、特権モード、ブートROM、OSのスケジューラ、
-システムコール、メモリアロケータ、ファイルシステムへ進む。
+次フェーズではPynqCへIR、オブジェクト形式、リンカ、複数翻訳単位を追加する。並行して
+割り込み・タイマー・GPIO、特権モード、ブートROM、OSのスケジューラ、システムコール、
+メモリアロケータ、ファイルシステムへ進む。
+
+## PynqCコンパイラ
+
+第2フェーズではRust製C-likeコンパイラ`pynqc`と最小ランタイムを提供する。
+
+```bash
+make compiler
+make compile PROGRAM=hello
+make run-c PROGRAM=hello
+make simulate-c PROGRAM=hello
+make test-c-integration
+make test-c-rtl
+make test-all
+```
+
+`pynqc`はLexer、Parser、Span付きAST、名前解決、型検査、独自ISAコード生成を行う。
+ローカル／グローバル変数、制御文、4引数までの関数と再帰、ポインタ、1次元配列、
+文字列、`sizeof`、短絡論理、ソフトウェア乗除算に対応する。実機PynqC検証は次で行う。
+
+```bash
+make hardware-c-test
+```
+
+言語の詳細は`docs/language-spec.md`、生成ABIは`docs/compiler-abi.md`、ランタイムは
+`docs/runtime.md`を参照する。

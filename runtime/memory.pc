@@ -1,0 +1,3 @@
+char *memset(char *destination, int value, int size);
+char *memcpy(char *destination, char *source, int size);
+int strlen(char *text);

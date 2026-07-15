@@ -1,0 +1,10 @@
+int main() {
+    int values[3];
+    int *pointer = values;
+    pointer[0] = 10;
+    pointer[1] = 20;
+    pointer[2] = 12;
+    print_int(values[0] + values[1] + values[2]);
+    putchar('\n');
+    return 0;
+}

@@ -1,0 +1,4 @@
+int main() {
+    puts("Hello from PynqC!\n");
+    return 0;
+}

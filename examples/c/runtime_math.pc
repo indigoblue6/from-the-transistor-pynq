@@ -1,0 +1,9 @@
+int main() {
+    print_int(-7 / 2);
+    putchar(' ');
+    print_int(-7 % 2);
+    putchar(' ');
+    print_int(-6 * 7);
+    putchar('\n');
+    return 0;
+}
