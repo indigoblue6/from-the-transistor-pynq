@@ -1,0 +1,12 @@
+[package]
+name = "pynq-cpu-emulator"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "pynq_cpu_emulator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pynq-cpu-emulator"
+path = "src/main.rs"
