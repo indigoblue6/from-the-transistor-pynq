@@ -15,7 +15,9 @@ current_hw_device $device
 refresh_hw_device -update_hw_probes false $device
 set_property PROGRAM.FILE [file join $build pynq_cpu.bit] $device
 set_property PROBES.FILE [file join $build pynq_cpu.ltx] $device
-program_hw_devices $device
+if {![info exists ::env(INDIGO_SKIP_PROGRAM)]} {
+    program_hw_devices $device
+}
 refresh_hw_device $device
 
 set ila [lindex [get_hw_ilas -of_objects $device] 0]

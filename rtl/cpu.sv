@@ -1,4 +1,4 @@
-module cpu (
+module cpu_legacy (
     input  logic        clk,
     input  logic        reset,
     output logic [31:0] instruction_address,

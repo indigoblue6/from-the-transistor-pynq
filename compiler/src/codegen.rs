@@ -274,6 +274,13 @@ impl<'a> Generator<'a> {
     }
 
     fn initialize_bytes(&mut self, address: u32, bytes: &[u8], total: usize) {
+        if bytes.is_empty() && total > 4 {
+            self.line(&format!("    li r2, 0x{address:08x}"));
+            self.line("    movi r3, 0");
+            self.line(&format!("    li r4, {total}"));
+            self.line("    call memset");
+            return;
+        }
         self.line(&format!("    li r6, 0x{address:08x}"));
         for index in 0..total {
             let value = bytes.get(index).copied().unwrap_or(0);
@@ -764,6 +771,7 @@ impl<'a> Generator<'a> {
 
     fn emit_runtime(&mut self) {
         self.line("; 最小ランタイム");
+        self.emit_os_wrappers();
         self.line("putchar:");
         self.line(&format!("    li r6, 0x{UART_TX:08x}"));
         self.line("    storeb r2, [r6 + 0]");
@@ -832,6 +840,65 @@ impl<'a> Generator<'a> {
         self.line("    movi r7, 1");
         self.line("    store r7, [r6 + 0]");
         self.line("    halt");
+        self.line("");
+    }
+
+    fn emit_os_wrappers(&mut self) {
+        for (name, number) in [
+            ("__csr_read_status", "status"),
+            ("__csr_read_epc", "epc"),
+            ("__csr_read_cause", "cause"),
+            ("__csr_read_badaddr", "badaddr"),
+            ("__csr_read_timer_count", "timer_count_lo"),
+        ] {
+            self.line(&format!("{name}:"));
+            self.line(&format!("    csrr r1, {number}"));
+            self.line("    ret");
+        }
+        for (name, number) in [
+            ("__csr_write_status", "status"),
+            ("__csr_write_epc", "epc"),
+            ("__csr_write_tvec", "tvec"),
+            ("__csr_write_interrupt_enable", "interrupt_enable"),
+            ("__csr_write_user_base", "user_base"),
+            ("__csr_write_user_limit", "user_limit"),
+            ("__csr_write_timer_control", "timer_control"),
+        ] {
+            self.line(&format!("{name}:"));
+            self.line(&format!("    csrw {number}, r2"));
+            self.line("    movi r1, 0");
+            self.line("    ret");
+        }
+        self.line("__csr_write_timer_compare:");
+        self.line("    csrw timer_compare_lo, r2");
+        self.line("    movi r6, 0");
+        self.line("    csrw timer_compare_hi, r6");
+        self.line("    movi r1, 0");
+        self.line("    ret");
+        self.line("__wfi:");
+        self.line("    wfi");
+        self.line("    movi r1, 0");
+        self.line("    ret");
+        self.line("__syscall4:");
+        self.line("    add r1, r2, r0");
+        self.line("    add r2, r3, r0");
+        self.line("    add r3, r4, r0");
+        self.line("    add r4, r5, r0");
+        self.line("    ecall");
+        self.line("    ret");
+        self.line("__uart_rx_status:");
+        self.line("    li r6, 0x8000000c");
+        self.line("    load r1, [r6 + 0]");
+        self.line("    ret");
+        self.line("__uart_rx_read:");
+        self.line("    li r6, 0x80000008");
+        self.line("    loadb r1, [r6 + 0]");
+        self.line("    ret");
+        self.line("__uart_rx_control:");
+        self.line("    li r6, 0x80000010");
+        self.line("    store r2, [r6 + 0]");
+        self.line("    movi r1, 0");
+        self.line("    ret");
         self.line("");
     }
 

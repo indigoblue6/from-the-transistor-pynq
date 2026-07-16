@@ -46,3 +46,24 @@ def test_エラーに行番号を含む():
         assemble("nop\nadd r16, r0, r0")
     with pytest.raises(AsmError, match=r"1行目: 即値"):
         assemble("movi r1, 99999999")
+
+
+def test_csr_and_trap_instructions():
+    data = assemble(
+        "csrr r3, status\ncsrw tvec, r4\neret\necall\nwfi\n"
+    )
+    words = struct.unpack("<5I", data)
+    assert words == (
+        (0x18 << 26) | (3 << 22),
+        (0x19 << 26) | (4 << 22) | 3,
+        0x1A << 26,
+        0x1B << 26,
+        0x1C << 26,
+    )
+
+
+def test_invalid_csr_number_reports_line():
+    with pytest.raises(AsmError) as error:
+        assemble("csrr r1, 0x100\n")
+    assert "1行目" in str(error.value)
+    assert "CSR番号" in str(error.value)

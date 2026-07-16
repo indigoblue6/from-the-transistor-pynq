@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""外付け3.3 V USB-UARTでPYNQ-Z1のPL UART出力を検証する。"""
+"""USB-UARTでPYNQ-Z1のUART出力を検証する。"""
 
 import argparse
 import os
@@ -15,7 +15,7 @@ EXPECTED = b"Hello, PYNQ CPU!\n"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("port", help="外付けUSB-UARTのデバイス（例: /dev/ttyUSB2）")
+    parser.add_argument("port", help="USB-UARTのデバイス（PROG UARTは通常/dev/ttyUSB1）")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
 
@@ -34,7 +34,11 @@ def main() -> int:
         while time.monotonic() < deadline and EXPECTED not in received:
             readable, _, _ = select.select([fd], [], [], 0.2)
             if readable:
-                received.extend(os.read(fd, 4096))
+                try:
+                    received.extend(os.read(fd, 4096))
+                except BlockingIOError:
+                    # JTAGサーバー起動時のFTDI一時切断は次のpollで再試行する。
+                    pass
         if EXPECTED not in received:
             print(f"USB-UART検証失敗: 受信={bytes(received)!r}", file=sys.stderr)
             return 1

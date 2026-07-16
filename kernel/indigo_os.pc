@@ -1,0 +1,294 @@
+int ticks;
+int rx_head;
+int rx_tail;
+char rx_buffer[128];
+char command_line[96];
+int ignore_lf_after_cr;
+char kernel_heap[1024];
+char heap_used[16];
+char *null_pointer;
+
+int string_equal(char *left, char *right) {
+    int index = 0;
+    while (left[index] != 0 && right[index] != 0) {
+        if (left[index] != right[index]) {
+            return 0;
+        }
+        index = index + 1;
+    }
+    return left[index] == right[index];
+}
+
+int string_starts(char *text, char *prefix) {
+    int index = 0;
+    while (prefix[index] != 0) {
+        if (text[index] != prefix[index]) {
+            return 0;
+        }
+        index = index + 1;
+    }
+    return 1;
+}
+
+char *kmalloc(int size) {
+    int index;
+    if (size <= 0 || size > 64) {
+        return null_pointer;
+    }
+    index = 0;
+    while (index < 16) {
+        if (heap_used[index] == 0) {
+            heap_used[index] = 1;
+            return &kernel_heap[index * 64];
+        }
+        index = index + 1;
+    }
+    return null_pointer;
+}
+
+int kfree(char *pointer) {
+    int offset;
+    int index;
+    if (pointer < &kernel_heap[0] || pointer >= &kernel_heap[1024]) {
+        return -1;
+    }
+    offset = pointer - &kernel_heap[0];
+    if (offset % 64 != 0) {
+        return -1;
+    }
+    index = offset / 64;
+    if (heap_used[index] == 0) {
+        return -2;
+    }
+    heap_used[index] = 0;
+    return 0;
+}
+
+int memory_free_blocks() {
+    int index = 0;
+    int count = 0;
+    while (index < 16) {
+        if (heap_used[index] == 0) {
+            count = count + 1;
+        }
+        index = index + 1;
+    }
+    return count;
+}
+
+void console_push(char value) {
+    int next = (rx_head + 1) % 128;
+    if (next != rx_tail) {
+        rx_buffer[rx_head] = value;
+        rx_head = next;
+    }
+}
+
+int console_pop() {
+    int value;
+    if (rx_head == rx_tail) {
+        return -1;
+    }
+    value = rx_buffer[rx_tail];
+    rx_tail = (rx_tail + 1) % 128;
+    return value;
+}
+
+int *trap_handler(int *frame) {
+    int cause = frame[17];
+    if (cause == 8) {
+        ticks = ticks + 1;
+        __csr_write_timer_compare(__csr_read_timer_count() + 312500);
+    } else {
+        if (cause == 9) {
+            while ((__uart_rx_status() & 1) != 0) {
+                console_push(__uart_rx_read());
+            }
+        } else {
+            if (cause == 7) {
+                frame[0] = -5;
+            } else {
+                puts("KERNEL PANIC\n");
+                puts("cause=");
+                print_int(cause);
+                puts(" epc=");
+                print_int(frame[15]);
+                puts(" badaddr=");
+                print_int(frame[18]);
+                putchar('\n');
+                panic("unexpected trap\n");
+            }
+        }
+    }
+    return frame;
+}
+
+int console_getchar() {
+    int value;
+    while (1) {
+        value = console_pop();
+        if (value >= 0) {
+            return value;
+        }
+        __wfi();
+    }
+    return -1;
+}
+
+void print_prompt() {
+    puts("indigo> ");
+}
+
+int console_readline() {
+    int length = 0;
+    int value;
+    while (1) {
+        value = console_getchar();
+        if (value == 10 && ignore_lf_after_cr != 0) {
+            ignore_lf_after_cr = 0;
+            continue;
+        } else {
+            if (value == 13 || value == 10) {
+                ignore_lf_after_cr = value == 13;
+                putchar('\n');
+                command_line[length] = 0;
+                return length;
+            }
+        }
+        if (value == 8 || value == 127) {
+            if (length > 0) {
+                length = length - 1;
+                putchar(8);
+                putchar(' ');
+                putchar(8);
+            }
+        } else {
+            if (length < 95) {
+                command_line[length] = value;
+                length = length + 1;
+                putchar(value);
+            }
+        }
+    }
+    return 0;
+}
+
+void command_help() {
+    puts("help      show command list\n");
+    puts("echo      print arguments\n");
+    puts("clear     clear terminal\n");
+    puts("ps        show tasks\n");
+    puts("mem       show memory information\n");
+    puts("uptime    show system uptime\n");
+    puts("cat       display a file\n");
+    puts("reboot    restart the system\n");
+}
+
+void command_ps() {
+    puts("PID  STATE      NAME\n");
+    puts("0    RUNNING    shell\n");
+}
+
+void command_mem() {
+    puts("Memory: 48 KiB\n");
+    puts("Allocator: 64 byte x 16, free=");
+    print_int(memory_free_blocks());
+    putchar('\n');
+}
+
+void command_cat(char *path) {
+    if (string_equal(path, "/hello.txt")) {
+        puts("Hello from IndigoOS!\n");
+    } else {
+        if (string_equal(path, "/motd")) {
+            puts("IndigoOS: small, observable, deterministic.\n");
+        } else {
+            if (string_equal(path, "/proc/uptime")) {
+                print_int(ticks);
+                putchar('\n');
+            } else {
+                puts("cat: file not found\n");
+            }
+        }
+    }
+}
+
+int execute_command() {
+    if (command_line[0] == 0) {
+        return 1;
+    }
+    if (string_equal(command_line, "help")) {
+        command_help();
+    } else {
+        if (string_starts(command_line, "echo ")) {
+            puts(&command_line[5]);
+            putchar('\n');
+        } else {
+            if (string_equal(command_line, "echo")) {
+                putchar('\n');
+            } else {
+                if (string_equal(command_line, "ps")) {
+                    command_ps();
+                } else {
+                    if (string_equal(command_line, "mem")) {
+                        command_mem();
+                    } else {
+                        if (string_equal(command_line, "uptime")) {
+                            print_int(ticks);
+                            puts(" ticks\n");
+                        } else {
+                            if (string_starts(command_line, "cat ")) {
+                                command_cat(&command_line[4]);
+                            } else {
+                                if (string_equal(command_line, "clear")) {
+                                    putchar(27);
+                                    puts("[2J");
+                                    putchar(27);
+                                    puts("[H");
+                                } else {
+                                    if (string_equal(command_line, "reboot")) {
+                                        puts("reboot requested\n");
+                                        return 0;
+                                    } else {
+                                        puts("unknown command: ");
+                                        puts(command_line);
+                                        putchar('\n');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+int main() {
+    char *probe;
+    probe = kmalloc(64);
+    if (probe == null_pointer || kfree(probe) != 0 || kfree(probe) != -2) {
+        panic("allocator self-test failed\n");
+    }
+
+    puts("IndigoOS 0.1\n");
+    puts("CPU: Indigo32\n");
+    puts("Memory: 48 KiB\n");
+    puts("Tasks: 1\n\n");
+
+    __uart_rx_control(1);
+    __csr_write_timer_compare(__csr_read_timer_count() + 312500);
+    __csr_write_timer_control(1);
+    __csr_write_interrupt_enable(3);
+    __csr_write_status(5);
+
+    while (1) {
+        print_prompt();
+        console_readline();
+        if (execute_command() == 0) {
+            return 0;
+        }
+    }
+    return 0;
+}

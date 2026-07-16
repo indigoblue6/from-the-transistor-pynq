@@ -28,7 +28,7 @@ if [ -n "${REGISTER_FILE:-}" ]; then
     register_arg="+REGISTER_FILE=$REGISTER_FILE"
 fi
 
-sources="rtl/alu.sv rtl/register_file.sv rtl/decoder.sv rtl/cpu.sv rtl/memory_map.sv sim/cpu_tb.sv"
+sources="rtl/alu.sv rtl/register_file.sv rtl/decoder.sv rtl/timer.sv rtl/interrupt_controller.sv rtl/csr_file.sv rtl/cpu_indigo.sv rtl/memory_map_indigo.sv sim/cpu_tb.sv"
 mkdir -p build
 if command -v iverilog >/dev/null 2>&1; then
     # Icarus Verilogを最優先する。
