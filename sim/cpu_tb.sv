@@ -11,6 +11,15 @@ module cpu_tb;
     logic [31:0] debug_pc, debug_instruction, debug_register_data;
     logic [3:0] debug_state, debug_register_index;
     logic debug_register_write;
+    logic uart_rx_available = 1'b0, uart_rx_overrun = 1'b0;
+    logic uart_rx_interrupt_enable = 1'b0;
+    logic [7:0] uart_rx_data = 8'b0;
+    logic uart_rx_pop, uart_rx_control_write;
+    logic [31:0] uart_rx_control_data;
+    logic uart_rx_pending = 1'b0;
+    logic debug_privileged, debug_interrupt_taken;
+    logic [2:0] debug_interrupt_pending, debug_interrupt_enable;
+    logic [31:0] debug_epc, debug_cause, debug_badaddr, debug_timer_count;
     string memory_file;
     string expected;
     string output_file;
@@ -28,6 +37,10 @@ module cpu_tb;
         .data_valid(data_valid), .data_write(data_write), .data_byte(data_byte),
         .data_address(data_address), .data_write_data(data_write_data),
         .data_read_data(data_read_data), .data_fault(data_fault),
+        .uart_rx_available(uart_rx_available), .uart_rx_overrun(uart_rx_overrun),
+        .uart_rx_interrupt_enable(uart_rx_interrupt_enable), .uart_rx_data(uart_rx_data),
+        .uart_rx_pop(uart_rx_pop), .uart_rx_control_write(uart_rx_control_write),
+        .uart_rx_control_data(uart_rx_control_data),
         .uart_valid(uart_valid), .uart_data(uart_data),
         .sim_exit_valid(sim_exit_valid), .sim_exit_code(sim_exit_code)
     );

@@ -11,7 +11,31 @@ add_files [file join $root build hello.mem]
 set_property file_type {Memory Initialization Files} [get_files hello.mem]
 set_property top pynq_z1_top [current_fileset]
 
+# 基板上のPROG UARTへ出すため、PS UART0と26 bit EMIO GPIOを有効にする。
+file mkdir [file join $build ip]
+create_ip -name processing_system7 -vendor xilinx.com -library ip -version 5.5 \
+    -module_name processing_system7_0 -dir build/hardware/ip
+set_property -dict [list \
+    CONFIG.PCW_CRYSTAL_PERIPHERAL_FREQMHZ {50} \
+    CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
+    CONFIG.PCW_UART0_UART0_IO {MIO 14 .. 15} \
+    CONFIG.PCW_UART0_BAUD_RATE {115200} \
+    CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
+    CONFIG.PCW_UART_PERIPHERAL_DIVISOR0 {10} \
+    CONFIG.PCW_USE_M_AXI_GP0 {0} \
+    CONFIG.PCW_GPIO_PERIPHERAL_ENABLE {1} \
+    CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {1} \
+    CONFIG.PCW_GPIO_EMIO_GPIO_WIDTH {26}] [get_ips processing_system7_0]
+generate_target all [get_ips processing_system7_0]
+synth_ip [get_ips processing_system7_0]
+
+# USB-JTAG VIOコンソールIPを生成する。
+create_ip -name vio -vendor xilinx.com -library ip -version 3.0 -module_name vio_0 -dir build/hardware/ip
+generate_target all [get_ips vio_0]
+synth_ip [get_ips vio_0]
+
 synth_design -top pynq_z1_top -part xc7z020clg400-1
+if {![info exists ::env(INDIGO_JTAG_ONLY)]} {
 create_debug_core u_ila_0 ila
 create_debug_port u_ila_0 probe
 create_debug_port u_ila_0 probe
@@ -19,7 +43,7 @@ create_debug_port u_ila_0 probe
 set_property C_DATA_DEPTH 1024 [get_debug_cores u_ila_0]
 set_property port_width 1 [get_debug_ports u_ila_0/probe0]
 set_property port_width 1 [get_debug_ports u_ila_0/probe1]
-set_property port_width 137 [get_debug_ports u_ila_0/probe2]
+set_property port_width 136 [get_debug_ports u_ila_0/probe2]
 set_property port_width 1 [get_debug_ports u_ila_0/probe3]
 connect_debug_port u_ila_0/clk [get_nets cpu_clk]
 connect_debug_port u_ila_0/probe0 [get_nets halted_internal]
@@ -28,6 +52,8 @@ set history_nets [get_nets uart_history*]
 set history_nets [lsearch -all -inline -not -exact $history_nets uart_history]
 connect_debug_port u_ila_0/probe2 $history_nets
 connect_debug_port u_ila_0/probe3 [get_nets hardware_done]
+}
+
 
 opt_design
 place_design

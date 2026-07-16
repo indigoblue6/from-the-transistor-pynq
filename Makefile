@@ -1,10 +1,10 @@
 PYTHON ?= python3
 PROGRAM ?= hello
 BUILD_DIR := build
-PORT ?=
+PORT ?= /dev/ttyUSB1
 ASSEMBLER := assembler/assembler.py
 
-.PHONY: all test test-assembler test-emulator test-rtl assemble emulate simulate compiler test-compiler test-lexer test-parser test-semantic test-codegen test-c-integration compile run-c simulate-c test-c-rtl test-all hardware-build hardware-test hardware-uart-test hardware-c-build hardware-c-test clean
+.PHONY: all test test-assembler test-emulator test-rtl test-exceptions test-interrupts assemble emulate simulate compiler test-compiler test-lexer test-parser test-semantic test-codegen test-c-integration compile run-c simulate-c test-c-rtl os kernel user-programs os-image run-os simulate-os test-os test-scheduler test-syscalls test-memory test-ramfs test-shell test-os-differential ps-uart-bridge hardware-build hardware-test hardware-uart-test hardware-c-build hardware-c-test hardware-os-test hardware-os-uart-test jtag-console test-all clean
 
 all: test
 
@@ -25,6 +25,12 @@ test-rtl:
 	sh sim/run_fault_tests.sh
 	sh sim/run_uart_fifo_test.sh
 
+test-exceptions:
+	sh sim/run_exception_tests.sh
+
+test-interrupts: test-exceptions
+	sh sim/run_uart_rx_test.sh
+
 assemble:
 	mkdir -p $(BUILD_DIR)
 	$(PYTHON) $(ASSEMBLER) examples/$(PROGRAM).s -o $(BUILD_DIR)/$(PROGRAM).bin --mem $(BUILD_DIR)/$(PROGRAM).mem
@@ -39,9 +45,16 @@ hardware-build: PROGRAM=hello
 hardware-build: assemble
 	vivado -mode batch -source scripts/build_hardware.tcl -nojournal -nolog
 
-hardware-test: hardware-build
-	vivado -mode batch -source scripts/program_hardware.tcl -nojournal -nolog
-	$(PYTHON) scripts/verify_hardware_capture.py
+ps-uart-bridge:
+	sh scripts/build_ps_uart_bridge.sh
+
+hardware-test: hardware-build ps-uart-bridge
+	@$(PYTHON) scripts/verify_usb_uart.py "$(PORT)" --timeout 30 & receiver=$$!; \
+	  sleep 1; \
+	  xsct scripts/program_prog_uart.tcl; \
+	  INDIGO_SKIP_PROGRAM=1 vivado -mode batch -source scripts/program_hardware.tcl -nojournal -nolog; \
+	  $(PYTHON) scripts/verify_hardware_capture.py; \
+	  wait $$receiver
 
 hardware-uart-test: hardware-build
 	@test -n "$(PORT)" || (echo "PORT=/dev/ttyUSBx を指定してください" >&2; exit 2)
@@ -87,7 +100,54 @@ simulate-c: compile
 test-c-rtl:
 	sh scripts/test_c_rtl.sh
 
-test-all: test test-c-integration test-c-rtl
+os kernel os-image: compiler
+	sh scripts/build_os_image.sh
+
+user-programs:
+	@echo "ユーザーモード実行基盤は未実装です" >&2
+	@exit 2
+
+run-os: os-image
+	sh scripts/test_os_emulator.sh
+
+simulate-os: os-image
+	sh scripts/test_os_rtl.sh
+
+test-scheduler:
+	@echo "複数タスクのスケジューラは未実装です" >&2
+	@exit 2
+
+test-syscalls:
+	@echo "ユーザー向けシステムコールは未実装です" >&2
+	@exit 2
+
+test-memory: os-image
+	sh scripts/test_os_emulator.sh --allocator-only
+
+test-ramfs: os-image
+	sh scripts/test_os_emulator.sh --ramfs-only
+
+test-shell: os-image
+	sh scripts/test_os_emulator.sh --shell-only
+
+test-os: test-exceptions test-interrupts test-memory test-ramfs test-shell
+
+test-os-differential: os-image
+	sh scripts/test_os_differential.sh
+
+hardware-os-test:
+	sh scripts/build_os_hardware.sh
+	sh scripts/build_ps_uart_bridge.sh
+	xsct scripts/program_prog_uart.tcl
+	@echo "IndigoOSを書き込みました。picocom -b 115200 /dev/ttyUSB1 でPROG UARTシェルを使用できます"
+
+hardware-os-uart-test: hardware-os-test
+	@echo "IndigoOSのPROG UARTシェルを起動しました"
+
+jtag-console:
+	vivado -mode tcl -source scripts/jtag_console.tcl
+
+test-all: test test-c-integration test-c-rtl test-os-differential
 
 hardware-c-build:
 	$(MAKE) compile PROGRAM=hardware

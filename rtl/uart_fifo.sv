@@ -1,4 +1,4 @@
-module uart_fifo (
+module uart_fifo #(parameter integer DEPTH_LOG2 = 5) (
     input  logic       clk,
     input  logic       reset,
     input  logic       input_valid,
@@ -8,10 +8,11 @@ module uart_fifo (
     output logic [7:0] output_data,
     input  logic       output_ready
 );
-    logic [7:0] memory [0:31];
-    logic [4:0] write_pointer, read_pointer;
-    logic [5:0] count;
-    localparam logic [5:0] DEPTH_COUNT = 6'd32;
+    localparam integer DEPTH = 1 << DEPTH_LOG2;
+    logic [7:0] memory [0:DEPTH-1];
+    logic [DEPTH_LOG2-1:0] write_pointer, read_pointer;
+    logic [DEPTH_LOG2:0] count;
+    localparam logic [DEPTH_LOG2:0] DEPTH_COUNT = {1'b1, {DEPTH_LOG2{1'b0}}};
     logic push, pop;
 
     assign input_ready = (count < DEPTH_COUNT);

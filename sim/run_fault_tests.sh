@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-sources="rtl/alu.sv rtl/register_file.sv rtl/decoder.sv rtl/cpu.sv rtl/memory_map.sv sim/cpu_fault_tb.sv"
+sources="rtl/alu.sv rtl/register_file.sv rtl/decoder.sv rtl/timer.sv rtl/interrupt_controller.sv rtl/csr_file.sv rtl/cpu_indigo.sv rtl/memory_map_indigo.sv sim/cpu_fault_tb.sv"
 mkdir -p build
 if command -v iverilog >/dev/null 2>&1; then
     iverilog -g2012 -s cpu_fault_tb -o build/cpu_fault_tb.vvp $sources

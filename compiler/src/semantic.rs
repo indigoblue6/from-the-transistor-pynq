@@ -55,7 +55,37 @@ impl Analyzer {
         );
         this.builtin("__mulsi3", int.clone(), vec![int.clone(), int.clone()]);
         this.builtin("__divsi3", int.clone(), vec![int.clone(), int.clone()]);
-        this.builtin("__modsi3", int.clone(), vec![int.clone(), int]);
+        this.builtin("__modsi3", int.clone(), vec![int.clone(), int.clone()]);
+        for name in [
+            "__csr_read_status",
+            "__csr_read_epc",
+            "__csr_read_cause",
+            "__csr_read_badaddr",
+            "__csr_read_timer_count",
+            "__uart_rx_status",
+            "__uart_rx_read",
+        ] {
+            this.builtin(name, int.clone(), vec![]);
+        }
+        for name in [
+            "__csr_write_status",
+            "__csr_write_epc",
+            "__csr_write_tvec",
+            "__csr_write_timer_compare",
+            "__csr_write_interrupt_enable",
+            "__csr_write_user_base",
+            "__csr_write_user_limit",
+            "__csr_write_timer_control",
+            "__uart_rx_control",
+        ] {
+            this.builtin(name, Type::Void, vec![int.clone()]);
+        }
+        this.builtin("__wfi", Type::Void, vec![]);
+        this.builtin(
+            "__syscall4",
+            int.clone(),
+            vec![int.clone(), int.clone(), int.clone(), int],
+        );
         this
     }
 

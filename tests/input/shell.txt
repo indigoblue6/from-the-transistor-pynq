@@ -1,0 +1,9 @@
+help
+echo hello world
+ps
+mem
+uptime
+cat /hello.txt
+cat /proc/uptime
+unknown
+reboot

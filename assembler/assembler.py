@@ -18,12 +18,23 @@ OPCODES = {
     "load": 0x0C, "store": 0x0D, "loadb": 0x0E, "storeb": 0x0F,
     "beq": 0x10, "bne": 0x11, "blt": 0x12, "bge": 0x13,
     "jmp": 0x14, "call": 0x15, "ret": 0x16, "halt": 0x17,
+    "csrr": 0x18, "csrw": 0x19, "eret": 0x1A, "ecall": 0x1B,
+    "wfi": 0x1C,
 }
 R_OPS = {"add", "sub", "and", "or", "xor", "shl", "shr", "sar"}
 I_OPS = {"addi", "load", "store", "loadb", "storeb"}
 B_OPS = {"beq", "bne", "blt", "bge"}
 J_OPS = {"jmp", "call"}
-ZERO_OPS = {"nop", "ret", "halt"}
+ZERO_OPS = {"nop", "ret", "halt", "eret", "ecall", "wfi"}
+
+CSRS = {
+    "status": 0x00, "epc": 0x01, "cause": 0x02, "tvec": 0x03,
+    "badaddr": 0x04, "timer_count_lo": 0x05, "timer_count_hi": 0x06,
+    "timer_compare_lo": 0x07, "timer_compare_hi": 0x08,
+    "interrupt_pending": 0x09, "interrupt_enable": 0x0A,
+    "user_base": 0x0B, "user_limit": 0x0C, "kernel_sp": 0x0D,
+    "scratch": 0x0E, "timer_control": 0x0F,
+}
 
 
 class AsmError(Exception):
@@ -56,6 +67,17 @@ def parse_register(token: str, line: SourceLine) -> int:
     if not match or not 0 <= int(match.group(1)) <= 15:
         raise fail(line, f"不正なレジスタ '{token}'（r0～r15を指定してください）")
     return int(match.group(1))
+
+
+def parse_csr(token: str, symbols: dict[str, int], line: SourceLine) -> int:
+    """CSR名または8 bit番号を解決する。"""
+    key = token.lower()
+    if key in CSRS:
+        return CSRS[key]
+    value = parse_value(token, symbols, line)
+    if not 0 <= value <= 0xFF:
+        raise fail(line, f"CSR番号 {value} は8 bitに収まりません")
+    return value
 
 
 def parse_value(token: str, symbols: dict[str, int], line: SourceLine) -> int:
@@ -165,6 +187,16 @@ def encode_instruction(line: SourceLine, symbols: dict[str, int]) -> list[int]:
         count(4, f"{op} rd, rs1, rs2")
         rd, rs1, rs2 = (parse_register(t, line) for t in tokens[1:])
         return [opcode | (rd << 22) | (rs1 << 18) | (rs2 << 14)]
+    if op == "csrr":
+        count(3, "csrr rd, csr")
+        rd = parse_register(tokens[1], line)
+        csr = parse_csr(tokens[2], symbols, line)
+        return [opcode | (rd << 22) | csr]
+    if op == "csrw":
+        count(3, "csrw csr, rs")
+        csr = parse_csr(tokens[1], symbols, line)
+        rs = parse_register(tokens[2], line)
+        return [opcode | (rs << 22) | csr]
     if op == "movi":
         count(3, "movi rd, imm22")
         rd = parse_register(tokens[1], line)
