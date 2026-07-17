@@ -16,15 +16,19 @@ module cpu_tb;
     logic [7:0] uart_rx_data = 8'b0;
     logic uart_rx_pop, uart_rx_control_write;
     logic [31:0] uart_rx_control_data;
-    logic uart_rx_pending = 1'b0;
-    logic debug_privileged, debug_interrupt_taken;
+    logic uart_rx_pending = 1'b0, external_irq = 1'b0;
+    logic debug_privileged, debug_interrupt_taken, debug_trap_valid;
+    logic debug_timer_interrupt, debug_external_interrupt;
+    logic debug_unrecoverable_fault;
     logic [2:0] debug_interrupt_pending, debug_interrupt_enable;
     logic [31:0] debug_epc, debug_cause, debug_badaddr, debug_timer_count;
+    logic [31:0] debug_kernel_sp;
     string memory_file;
     string expected;
     string output_file;
     string register_file;
     string actual = "";
+    integer inject_external, external_sent;
     integer cycles, max_cycles, output_descriptor, register_descriptor, register_index;
     logic [31:0] register_shadow [0:15];
 
@@ -52,6 +56,8 @@ module cpu_tb;
             expected = "";
         if (!$value$plusargs("MAX_CYCLES=%d", max_cycles))
             max_cycles = 2000000;
+        inject_external = $test$plusargs("EXTERNAL_IRQ");
+        external_sent = 0;
         output_descriptor = 0;
         if ($value$plusargs("OUTPUT_FILE=%s", output_file)) begin
             output_descriptor = $fopen(output_file, "wb");
@@ -72,6 +78,12 @@ module cpu_tb;
         reset <= 1'b0;
         for (cycles = 0; cycles < max_cycles; cycles = cycles + 1) begin
             @(posedge clk);
+            if (inject_external != 0 && external_sent == 0 && debug_state == 6 && debug_interrupt_enable == 3'b010) begin
+                external_irq = 1'b1;
+                external_sent = 1;
+            end else begin
+                external_irq = 1'b0;
+            end
             if (debug_register_write && debug_register_index != 0)
                 register_shadow[debug_register_index] = debug_register_data;
             if (uart_valid) begin

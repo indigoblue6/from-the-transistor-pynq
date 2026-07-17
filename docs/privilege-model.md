@@ -1,5 +1,7 @@
 # Indigo32特権・保護モデル
 
+この文書の内容は[特権アーキテクチャ](privilege.md)へ統合した。以下は背景説明として残す。
+
 ## 実行モード
 
 リセット直後はKernel modeである。Kernel modeは全命令、命令ROM、データRAM、MMIOへアクセス

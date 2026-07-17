@@ -37,21 +37,40 @@ synth_ip [get_ips vio_0]
 synth_design -top pynq_z1_top -part xc7z020clg400-1
 if {![info exists ::env(INDIGO_JTAG_ONLY)]} {
 create_debug_core u_ila_0 ila
-create_debug_port u_ila_0 probe
-create_debug_port u_ila_0 probe
-create_debug_port u_ila_0 probe
+for {set index 1} {$index < 16} {incr index} {
+    create_debug_port u_ila_0 probe
+}
 set_property C_DATA_DEPTH 1024 [get_debug_cores u_ila_0]
-set_property port_width 1 [get_debug_ports u_ila_0/probe0]
-set_property port_width 1 [get_debug_ports u_ila_0/probe1]
-set_property port_width 136 [get_debug_ports u_ila_0/probe2]
-set_property port_width 1 [get_debug_ports u_ila_0/probe3]
+set widths {1 1 136 1 1 32 32 1 32 32 32 3 1 1 2 1}
+for {set index 0} {$index < 16} {incr index} {
+    set_property port_width [lindex $widths $index] \
+        [get_debug_ports u_ila_0/probe$index]
+}
+proc exact_bus {root width} {
+    set nets {}
+    for {set bit 0} {$bit < $width} {incr bit} {
+        lappend nets [get_nets [format {%s[%d]} $root $bit]]
+    }
+    return $nets
+}
 connect_debug_port u_ila_0/clk [get_nets cpu_clk]
 connect_debug_port u_ila_0/probe0 [get_nets halted_internal]
 connect_debug_port u_ila_0/probe1 [get_nets faulted_internal]
-set history_nets [get_nets uart_history*]
-set history_nets [lsearch -all -inline -not -exact $history_nets uart_history]
-connect_debug_port u_ila_0/probe2 $history_nets
+connect_debug_port u_ila_0/probe2 [exact_bus uart_history 136]
 connect_debug_port u_ila_0/probe3 [get_nets hardware_done]
+connect_debug_port u_ila_0/probe4 [get_nets current_privileged]
+connect_debug_port u_ila_0/probe5 [exact_bus unused_debug_pc 32]
+connect_debug_port u_ila_0/probe6 [exact_bus unused_debug_instruction 32]
+connect_debug_port u_ila_0/probe7 [get_nets trap_valid_debug]
+connect_debug_port u_ila_0/probe8 [exact_bus cause_debug 32]
+connect_debug_port u_ila_0/probe9 [exact_bus epc_debug 32]
+connect_debug_port u_ila_0/probe10 [exact_bus badaddr_debug 32]
+connect_debug_port u_ila_0/probe11 [exact_bus interrupt_pending_debug 3]
+connect_debug_port u_ila_0/probe12 [get_nets timer_interrupt_debug]
+connect_debug_port u_ila_0/probe13 [get_nets external_interrupt_debug]
+connect_debug_port u_ila_0/probe14 [exact_bus current_task_id_debug 2]
+connect_debug_port u_ila_0/probe15 [get_nets unrecoverable_fault_debug]
+
 }
 
 

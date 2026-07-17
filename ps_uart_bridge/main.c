@@ -45,6 +45,14 @@ int main(void)
     uint32_t gpio_output = 0u;
 
     uart_init();
+    /* bridge起動とPS UART経路をPL出力とは独立に確認できる固定マーカー。 */
+    {
+        static const char ready[] = "PS BRIDGE READY\r\n";
+        uint32_t index;
+        for (index = 0u; index < sizeof(ready) - 1u; index++) {
+            uart_putc((uint8_t)ready[index]);
+        }
+    }
     GPIO_DATA_BANK2 = gpio_output;
     GPIO_DIR_BANK2 = GPIO_OUTPUT_MASK;
     GPIO_OUT_BANK2 = GPIO_OUTPUT_MASK;

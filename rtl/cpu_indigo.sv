@@ -11,6 +11,7 @@ module cpu (
     input  logic [31:0] data_read_data,
     input  logic        data_fault,
     input  logic        uart_rx_pending,
+    input  logic        external_irq,
     output logic        halted,
     output logic        faulted,
     output logic [31:0] debug_pc,
@@ -26,7 +27,12 @@ module cpu (
     output logic [31:0] debug_cause,
     output logic [31:0] debug_badaddr,
     output logic [31:0] debug_timer_count,
-    output logic        debug_interrupt_taken
+    output logic        debug_interrupt_taken,
+    output logic        debug_trap_valid,
+    output logic        debug_timer_interrupt,
+    output logic        debug_external_interrupt,
+    output logic        debug_unrecoverable_fault,
+    output logic [31:0] debug_kernel_sp
 );
     localparam logic [5:0] OP_NOP = 6'h00, OP_ADD = 6'h01, OP_SUB = 6'h02,
         OP_AND = 6'h03, OP_OR = 6'h04, OP_XOR = 6'h05, OP_SHL = 6'h06,
@@ -36,14 +42,16 @@ module cpu (
         OP_BNE = 6'h11, OP_BLT = 6'h12, OP_BGE = 6'h13,
         OP_JMP = 6'h14, OP_CALL = 6'h15, OP_RET = 6'h16, OP_HALT = 6'h17,
         OP_CSRR = 6'h18, OP_CSRW = 6'h19, OP_ERET = 6'h1a,
-        OP_ECALL = 6'h1b, OP_WFI = 6'h1c;
+        OP_ECALL = 6'h1b, OP_WFI = 6'h1c, OP_CSRSET = 6'h1d,
+        OP_CSRCLR = 6'h1e;
     localparam logic [7:0] CSR_TIMER_COUNT_LO = 8'h05,
         CSR_TIMER_COUNT_HI = 8'h06;
     localparam logic [31:0] CAUSE_ILLEGAL = 32'd0,
         CAUSE_FETCH_MISALIGNED = 32'd1, CAUSE_FETCH_ACCESS = 32'd2,
         CAUSE_LOAD_MISALIGNED = 32'd3, CAUSE_LOAD_ACCESS = 32'd4,
         CAUSE_STORE_MISALIGNED = 32'd5, CAUSE_STORE_ACCESS = 32'd6,
-        CAUSE_ECALL = 32'd7, CAUSE_PRIVILEGED = 32'd11;
+        CAUSE_ECALL = 32'd7, CAUSE_PRIVILEGED = 32'd11,
+        CAUSE_USER_ECALL = 32'd12, CAUSE_RESERVED_ENCODING = 32'd13;
 
     typedef enum logic [3:0] {
         ST_FETCH, ST_FETCH_WAIT, ST_DECODE, ST_EXECUTE,
@@ -55,7 +63,7 @@ module cpu (
     logic [5:0] decoded_opcode;
     logic [3:0] decoded_a, decoded_b, decoded_c;
     logic [31:0] immediate18, immediate22, offset26;
-    logic decoded_illegal;
+    logic decoded_illegal, decoded_reserved_violation;
     logic [3:0] read_index1, read_index2;
     logic [31:0] read_data1, read_data2, read_data3;
     logic register_write;
@@ -69,11 +77,14 @@ module cpu (
     logic memory_is_write, memory_is_byte;
 
     logic [7:0] csr_read_number, csr_write_number;
+    logic [31:0] csr_write_data;
+    logic csr_rmw_allowed;
     logic [31:0] csr_read_data;
     logic csr_read_valid, csr_write_enable, csr_write_valid;
     logic trap_enter, csr_eret;
     logic [31:0] trap_epc, trap_cause, trap_badaddr;
     logic [31:0] status_value, csr_epc, csr_tvec, user_base, user_limit;
+    logic [31:0] kernel_sp_value;
     logic [2:0] interrupt_pending, interrupt_enable;
     logic [63:0] timer_count;
     logic [31:0] csr_cause, csr_badaddr;
@@ -81,14 +92,14 @@ module cpu (
     logic [31:0] interrupt_cause;
     logic user_csr_read_allowed;
     logic [31:0] effective_address;
-    logic [32:0] effective_end;
-    logic effective_user_allowed;
+    logic effective_user_allowed, fetch_user_allowed, trap_active;
 
     decoder decoder_i (
         .instruction(instruction_register), .opcode(decoded_opcode),
         .reg_a(decoded_a), .reg_b(decoded_b), .reg_c(decoded_c),
         .immediate18(immediate18), .immediate22(immediate22),
-        .offset26(offset26), .illegal(decoded_illegal)
+        .offset26(offset26), .illegal(decoded_illegal),
+        .reserved_violation(decoded_reserved_violation)
     );
 
     assign read_index1 = (decoded_opcode == OP_RET) ? 4'd14 : decoded_b;
@@ -106,8 +117,18 @@ module cpu (
 
     assign csr_read_number = instruction_register[7:0];
     assign csr_write_number = instruction_register[7:0];
-    assign csr_write_enable = state == ST_EXECUTE && decoded_opcode == OP_CSRW &&
-        status_value[2] && csr_write_valid;
+    assign csr_rmw_allowed = csr_write_number != 8'h09;
+    always_comb begin
+        case (decoded_opcode)
+            OP_CSRSET: csr_write_data = csr_read_data | read_data3;
+            OP_CSRCLR: csr_write_data = csr_read_data & ~read_data3;
+            default: csr_write_data = read_data3;
+        endcase
+    end
+    assign csr_write_enable = state == ST_EXECUTE &&
+        (decoded_opcode == OP_CSRW || decoded_opcode == OP_CSRSET ||
+         decoded_opcode == OP_CSRCLR) && status_value[2] && csr_write_valid &&
+        (decoded_opcode == OP_CSRW || csr_rmw_allowed);
     assign user_csr_read_allowed = csr_read_number == CSR_TIMER_COUNT_LO ||
         csr_read_number == CSR_TIMER_COUNT_HI;
 
@@ -115,15 +136,17 @@ module cpu (
         .clk(clk), .reset(reset), .read_number(csr_read_number),
         .read_data(csr_read_data), .read_valid(csr_read_valid),
         .write_enable(csr_write_enable), .write_number(csr_write_number),
-        .write_data(read_data3), .write_valid(csr_write_valid),
+        .write_data(csr_write_data), .write_valid(csr_write_valid),
         .trap_enter(trap_enter), .trap_epc(trap_epc), .trap_cause(trap_cause),
         .trap_badaddr(trap_badaddr), .eret(csr_eret),
-        .uart_rx_pending(uart_rx_pending), .status_value(status_value),
+        .uart_rx_pending(uart_rx_pending), .external_irq(external_irq),
+        .status_value(status_value),
         .epc_value(csr_epc), .tvec_value(csr_tvec),
         .user_base_value(user_base), .user_limit_value(user_limit),
         .interrupt_pending(interrupt_pending), .interrupt_enable(interrupt_enable),
         .timer_count(timer_count), .cause_value(csr_cause),
-        .badaddr_value(csr_badaddr)
+        .badaddr_value(csr_badaddr), .kernel_sp_value(kernel_sp_value),
+        .trap_active(trap_active)
     );
 
     interrupt_controller interrupt_controller_i (
@@ -133,12 +156,15 @@ module cpu (
     );
 
     assign effective_address = read_data1 + immediate18;
-    assign effective_end = {1'b0, effective_address} +
-        ((decoded_opcode == OP_LOAD || decoded_opcode == OP_STORE) ? 33'd4 : 33'd1);
-    assign effective_user_allowed = status_value[2] ||
-        ((read_data1 + immediate18) < 32'h8000_0000 &&
-         (read_data1 + immediate18) >= user_base &&
-         !effective_end[32] && effective_end[31:0] <= user_limit);
+    protection_unit data_protection_i (
+        .privileged(status_value[2]), .address(effective_address),
+        .access_bytes((decoded_opcode == OP_LOAD || decoded_opcode == OP_STORE) ? 3'd4 : 3'd1),
+        .user_base(user_base), .user_limit(user_limit), .allowed(effective_user_allowed)
+    );
+    protection_unit fetch_protection_i (
+        .privileged(status_value[2]), .address(pc), .access_bytes(3'd4),
+        .user_base(user_base), .user_limit(user_limit), .allowed(fetch_user_allowed)
+    );
 
     assign instruction_address = pc;
     assign debug_pc = pc;
@@ -156,6 +182,11 @@ module cpu (
     assign debug_cause = csr_cause;
     assign debug_badaddr = csr_badaddr;
     assign debug_timer_count = timer_count[31:0];
+    assign debug_trap_valid = trap_enter;
+    assign debug_timer_interrupt = interrupt_pending[0];
+    assign debug_external_interrupt = interrupt_pending[1];
+    assign debug_unrecoverable_fault = state == ST_FAULT;
+    assign debug_kernel_sp = kernel_sp_value;
 
     always_comb begin
         register_write = 1'b0;
@@ -216,7 +247,7 @@ module cpu (
         input logic [31:0] requested_badaddr
     );
         begin
-            if (csr_tvec == 32'b0) begin
+            if (csr_tvec == '0 || trap_active) begin
                 state <= ST_FAULT;
             end else begin
                 trap_enter <= 1'b1;
@@ -259,7 +290,7 @@ module cpu (
                         enter_trap(pc, CAUSE_FETCH_MISALIGNED, pc);
                     end else if (pc >= 32'h0000_4000 ||
                                  (!status_value[2] &&
-                                  (pc < user_base || pc + 32'd4 > user_limit))) begin
+                                  !fetch_user_allowed)) begin
                         enter_trap(pc, CAUSE_FETCH_ACCESS, pc);
                     end else begin
                         state <= ST_FETCH_WAIT;
@@ -272,7 +303,8 @@ module cpu (
                 end
                 ST_DECODE: begin
                     if (decoded_illegal)
-                        enter_trap(pc - 32'd4, CAUSE_ILLEGAL, instruction_register);
+                        enter_trap(pc - 32'd4, decoded_reserved_violation ?
+                            CAUSE_RESERVED_ENCODING : CAUSE_ILLEGAL, instruction_register);
                     else
                         state <= ST_EXECUTE;
                 end
@@ -333,10 +365,11 @@ module cpu (
                             else
                                 state <= ST_FETCH;
                         end
-                        OP_CSRW: begin
+                        OP_CSRW, OP_CSRSET, OP_CSRCLR: begin
                             if (!status_value[2])
                                 enter_trap(pc - 32'd4, CAUSE_PRIVILEGED, instruction_register);
-                            else if (!csr_write_valid)
+                            else if (!csr_write_valid ||
+                                     (decoded_opcode != OP_CSRW && !csr_rmw_allowed))
                                 enter_trap(pc - 32'd4, CAUSE_ILLEGAL, instruction_register);
                             else
                                 state <= ST_FETCH;
@@ -350,9 +383,20 @@ module cpu (
                                 state <= ST_FETCH;
                             end
                         end
-                        OP_ECALL: enter_trap(pc, CAUSE_ECALL, 32'b0);
-                        OP_WFI: state <= ST_WFI;
-                        OP_HALT: state <= ST_HALTED;
+                        OP_ECALL: enter_trap(pc, status_value[2] ? CAUSE_ECALL :
+                            CAUSE_USER_ECALL, 32'b0);
+                        OP_WFI: begin
+                            if (!status_value[2])
+                                enter_trap(pc - 32'd4, CAUSE_PRIVILEGED, instruction_register);
+                            else
+                                state <= ST_WFI;
+                        end
+                        OP_HALT: begin
+                            if (!status_value[2])
+                                enter_trap(pc - 32'd4, CAUSE_PRIVILEGED, instruction_register);
+                            else
+                                state <= ST_HALTED;
+                        end
                         default: enter_trap(pc - 32'd4, CAUSE_ILLEGAL, instruction_register);
                     endcase
                 end

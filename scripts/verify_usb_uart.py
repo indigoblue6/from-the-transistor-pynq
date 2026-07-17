@@ -17,7 +17,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("port", help="USB-UARTのデバイス（PROG UARTは通常/dev/ttyUSB1）")
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--expected", default=EXPECTED.decode("ascii"),
+                        help="待ち受けるASCII部分文字列")
     args = parser.parse_args()
+    expected = args.expected.encode("ascii")
 
     fd = os.open(args.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
     try:
@@ -31,7 +34,7 @@ def main() -> int:
         termios.tcflush(fd, termios.TCIFLUSH)
         received = bytearray()
         deadline = time.monotonic() + args.timeout
-        while time.monotonic() < deadline and EXPECTED not in received:
+        while time.monotonic() < deadline and expected not in received:
             readable, _, _ = select.select([fd], [], [], 0.2)
             if readable:
                 try:
@@ -39,10 +42,10 @@ def main() -> int:
                 except BlockingIOError:
                     # JTAGサーバー起動時のFTDI一時切断は次のpollで再試行する。
                     pass
-        if EXPECTED not in received:
+        if expected not in received:
             print(f"USB-UART検証失敗: 受信={bytes(received)!r}", file=sys.stderr)
             return 1
-        print(f"USB-UART実機検証成功: 受信={EXPECTED!r}")
+        print(f"USB-UART実機検証成功: 受信={expected!r}")
         return 0
     finally:
         os.close(fd)

@@ -14,6 +14,7 @@ module csr_file (
     input  logic [31:0] trap_badaddr,
     input  logic        eret,
     input  logic        uart_rx_pending,
+    input  logic        external_irq,
     output logic [31:0] status_value,
     output logic [31:0] epc_value,
     output logic [31:0] tvec_value,
@@ -23,7 +24,9 @@ module csr_file (
     output logic [2:0]  interrupt_enable,
     output logic [63:0] timer_count,
     output logic [31:0] cause_value,
-    output logic [31:0] badaddr_value
+    output logic [31:0] badaddr_value,
+    output logic [31:0] kernel_sp_value,
+    output logic        trap_active
 );
     localparam logic [7:0] CSR_STATUS = 8'h00, CSR_EPC = 8'h01,
         CSR_CAUSE = 8'h02, CSR_TVEC = 8'h03, CSR_BADADDR = 8'h04,
@@ -34,8 +37,8 @@ module csr_file (
         CSR_KERNEL_SP = 8'h0d, CSR_SCRATCH = 8'h0e,
         CSR_TIMER_CONTROL = 8'h0f;
 
-    logic [31:0] kernel_sp_value, scratch_value;
-    logic software_pending;
+    logic [31:0] scratch_value;
+    logic software_pending, external_pending;
     logic [63:0] timer_compare;
     logic timer_enabled, timer_pending;
     logic write_compare_low, write_compare_high, write_timer_control;
@@ -43,7 +46,7 @@ module csr_file (
     assign write_compare_low = write_enable && write_valid && write_number == CSR_TIMER_COMPARE_LO;
     assign write_compare_high = write_enable && write_valid && write_number == CSR_TIMER_COMPARE_HI;
     assign write_timer_control = write_enable && write_valid && write_number == CSR_TIMER_CONTROL;
-    assign interrupt_pending = {software_pending, uart_rx_pending, timer_pending};
+    assign interrupt_pending = {software_pending, external_pending | uart_rx_pending, timer_pending};
 
     indigo_timer timer_i (
         .clk(clk), .reset(reset),
@@ -99,12 +102,20 @@ module csr_file (
             badaddr_value <= 32'b0;
             interrupt_enable <= 3'b0;
             software_pending <= 1'b0;
+            external_pending <= 1'b0;
+            trap_active <= 1'b0;
             user_base_value <= 32'b0;
             user_limit_value <= 32'b0;
             kernel_sp_value <= 32'h0001_0000;
             scratch_value <= 32'b0;
         end else begin
+            if (external_irq)
+                external_pending <= 1'b1;
+            else if (write_enable && write_valid &&
+                     write_number == CSR_INTERRUPT_PENDING && write_data[1])
+                external_pending <= 1'b0;
             if (trap_enter) begin
+                trap_active <= 1'b1;
                 status_value[1] <= status_value[0];
                 status_value[3] <= status_value[2];
                 status_value[0] <= 1'b0;
@@ -113,6 +124,7 @@ module csr_file (
                 cause_value <= trap_cause;
                 badaddr_value <= trap_badaddr;
             end else if (eret) begin
+                trap_active <= 1'b0;
                 status_value[0] <= status_value[1];
                 status_value[2] <= status_value[3];
                 status_value[1] <= 1'b0;

@@ -96,11 +96,11 @@ int console_pop() {
 
 int *trap_handler(int *frame) {
     int cause = frame[17];
-    if (cause == 8) {
+    if (cause == -2147483640) {
         ticks = ticks + 1;
         __csr_write_timer_compare(__csr_read_timer_count() + 312500);
     } else {
-        if (cause == 9) {
+        if (cause == -2147483639) {
             while ((__uart_rx_status() & 1) != 0) {
                 console_push(__uart_rx_read());
             }

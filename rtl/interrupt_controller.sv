@@ -11,11 +11,11 @@ module interrupt_controller (
         active = pending & enable;
         request = global_enable && (active != 3'b000);
         if (active[0])
-            cause = 32'd8;
+            cause = 32'h8000_0008;
         else if (active[1])
-            cause = 32'd9;
+            cause = 32'h8000_0009;
         else if (active[2])
-            cause = 32'd10;
+            cause = 32'h8000_000a;
         else
             cause = 32'b0;
     end
