@@ -4,7 +4,7 @@ BUILD_DIR := build
 PORT ?= /dev/ttyUSB1
 ASSEMBLER := assembler/assembler.py
 
-.PHONY: all test test-assembler test-emulator test-rtl test-exceptions test-interrupts assemble emulate simulate compiler test-compiler test-lexer test-parser test-semantic test-codegen test-c-integration compile run-c simulate-c test-c-rtl os kernel user-programs os-image run-os simulate-os test-os test-scheduler test-syscalls test-memory test-ramfs test-shell test-os-differential ps-uart-bridge hardware-build hardware-test hardware-uart-test hardware-c-build hardware-c-test hardware-os-test hardware-os-uart-test jtag-console test-all clean
+.PHONY: all test test-assembler test-isa-constants test-emulator test-rtl test-exceptions test-interrupts assemble emulate simulate compiler test-compiler test-lexer test-parser test-semantic test-codegen test-c-integration compile run-c simulate-c test-c-rtl os kernel user-programs os-image run-os simulate-os test-os test-scheduler test-syscalls test-memory test-ramfs test-shell test-os-differential ps-uart-bridge hardware-build hardware-test hardware-uart-test hardware-c-build hardware-c-test hardware-os-test hardware-os-uart-test jtag-console test-all clean test-privilege test-traps scheduler-image emulate-kernel simulate-kernel hardware-kernel-build hardware-kernel-test hardware-kernel-console
 
 all: test
 
@@ -12,6 +12,9 @@ test: test-assembler test-emulator test-rtl
 
 test-assembler:
 	$(PYTHON) -m pytest -q assembler/tests
+
+test-isa-constants:
+	$(PYTHON) scripts/test_isa_constants.py
 
 test-emulator:
 	cargo test --manifest-path emulator/Cargo.toml
@@ -28,7 +31,12 @@ test-rtl:
 test-exceptions:
 	sh sim/run_exception_tests.sh
 
-test-interrupts: test-exceptions
+test-privilege: test-assembler
+	cargo test --manifest-path emulator/Cargo.toml user_mode
+
+test-traps: test-exceptions
+
+test-interrupts: test-traps
 	sh sim/run_uart_rx_test.sh
 
 assemble:
@@ -103,9 +111,8 @@ test-c-rtl:
 os kernel os-image: compiler
 	sh scripts/build_os_image.sh
 
-user-programs:
-	@echo "ユーザーモード実行基盤は未実装です" >&2
-	@exit 2
+user-programs: scheduler-image
+	@echo "ユーザーモード用の3タスクを含む $(BUILD_DIR)/scheduler.bin を生成しました"
 
 run-os: os-image
 	sh scripts/test_os_emulator.sh
@@ -113,13 +120,20 @@ run-os: os-image
 simulate-os: os-image
 	sh scripts/test_os_rtl.sh
 
-test-scheduler:
-	@echo "複数タスクのスケジューラは未実装です" >&2
-	@exit 2
+scheduler-image:
+	mkdir -p $(BUILD_DIR)
+	$(PYTHON) $(ASSEMBLER) kernel/scheduler_demo.s -o $(BUILD_DIR)/scheduler.bin --mem $(BUILD_DIR)/scheduler.mem
 
-test-syscalls:
-	@echo "ユーザー向けシステムコールは未実装です" >&2
-	@exit 2
+emulate-kernel: scheduler-image
+	cargo run --quiet --manifest-path emulator/Cargo.toml -- $(BUILD_DIR)/scheduler.bin --max-steps 2000000
+
+simulate-kernel: scheduler-image
+	SKIP_EXPECT=1 MAX_CYCLES=2000000 sh sim/run_sim.sh scheduler
+
+test-scheduler: scheduler-image
+	bash scripts/test_scheduler.sh
+
+test-syscalls: test-scheduler
 
 test-memory: os-image
 	sh scripts/test_os_emulator.sh --allocator-only
@@ -135,6 +149,24 @@ test-os: test-exceptions test-interrupts test-memory test-ramfs test-shell
 test-os-differential: os-image
 	sh scripts/test_os_differential.sh
 
+hardware-kernel-build: scheduler-image
+	cp $(BUILD_DIR)/scheduler.mem $(BUILD_DIR)/hello.mem
+	vivado -mode batch -source scripts/build_hardware.tcl -nojournal -nolog
+
+hardware-kernel-test: hardware-kernel-build ps-uart-bridge
+	@$(PYTHON) scripts/verify_usb_uart.py "$(PORT)" --timeout 45 --expected 'SCHEDULER OK' & receiver=$$!; \
+	  sleep 1; \
+	  xsct scripts/program_prog_uart.tcl; \
+	  INDIGO_SKIP_PROGRAM=1 vivado -mode batch -source scripts/program_hardware.tcl -nojournal -nolog; \
+	  $(PYTHON) scripts/verify_hardware_capture.py --kernel; \
+	  wait $$receiver
+
+# minicomを開いたまま使う対話デバッグ用。
+hardware-kernel-console: hardware-kernel-build ps-uart-bridge
+	xsct scripts/program_prog_uart.tcl
+	INDIGO_SKIP_PROGRAM=1 vivado -mode batch -source scripts/program_hardware.tcl -nojournal -nolog
+	$(PYTHON) scripts/verify_hardware_capture.py --kernel
+
 hardware-os-test:
 	sh scripts/build_os_hardware.sh
 	sh scripts/build_ps_uart_bridge.sh
@@ -147,7 +179,7 @@ hardware-os-uart-test: hardware-os-test
 jtag-console:
 	vivado -mode tcl -source scripts/jtag_console.tcl
 
-test-all: test test-c-integration test-c-rtl test-os-differential
+test-all: test test-isa-constants test-privilege test-traps test-interrupts test-scheduler test-c-integration test-c-rtl test-os-differential
 
 hardware-c-build:
 	$(MAKE) compile PROGRAM=hardware

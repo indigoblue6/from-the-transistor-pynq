@@ -43,6 +43,8 @@ pub mod opcode {
     pub const ERET: u8 = 0x1a;
     pub const ECALL: u8 = 0x1b;
     pub const WFI: u8 = 0x1c;
+    pub const CSRSET: u8 = 0x1d;
+    pub const CSRCLR: u8 = 0x1e;
 }
 
 pub mod csr {
@@ -89,10 +91,26 @@ pub mod cause {
     pub const STORE_MISALIGNED: u32 = 5;
     pub const STORE_ACCESS: u32 = 6;
     pub const ECALL: u32 = 7;
-    pub const TIMER_INTERRUPT: u32 = 8;
-    pub const UART_RX_INTERRUPT: u32 = 9;
-    pub const SOFTWARE_INTERRUPT: u32 = 10;
+    pub const INTERRUPT_FLAG: u32 = 1 << 31;
+    pub const TIMER_INTERRUPT: u32 = INTERRUPT_FLAG | 8;
+    pub const EXTERNAL_INTERRUPT: u32 = INTERRUPT_FLAG | 9;
+    pub const UART_RX_INTERRUPT: u32 = EXTERNAL_INTERRUPT;
+    pub const SOFTWARE_INTERRUPT: u32 = INTERRUPT_FLAG | 10;
     pub const PRIVILEGED_INSTRUCTION: u32 = 11;
+    pub const USER_ECALL: u32 = 12;
+    pub const RESERVED_ENCODING: u32 = 13;
+    pub const BREAKPOINT: u32 = 14;
+    pub const CAPABILITY_FAULT: u32 = 15;
+    pub const INSTRUCTION_PAGE_FAULT: u32 = 16;
+    pub const LOAD_PAGE_FAULT: u32 = 17;
+    pub const STORE_PAGE_FAULT: u32 = 18;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CsrOperation {
+    Write,
+    Set,
+    Clear,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +160,7 @@ pub enum Instruction {
     CsrWrite {
         rs: usize,
         csr: u8,
+        operation: CsrOperation,
     },
     Eret,
     Ecall,
@@ -153,9 +172,11 @@ pub enum Fault {
     ProgramTooLarge(usize),
     FetchViolation(u32),
     IllegalInstruction { pc: u32, word: u32 },
+    ReservedEncoding { pc: u32, word: u32 },
     UnalignedAccess(u32),
     MemoryViolation(u32),
     StepLimit(u64),
+    DoubleFault { first_cause: u32, second_cause: u32 },
 }
 
 impl fmt::Display for Fault {
@@ -166,9 +187,19 @@ impl fmt::Display for Fault {
             Self::IllegalInstruction { pc, word } => {
                 write!(f, "不正命令: PC=0x{pc:08x}, word=0x{word:08x}")
             }
+            Self::ReservedEncoding { pc, word } => {
+                write!(f, "予約bit違反: PC=0x{pc:08x}, word=0x{word:08x}")
+            }
             Self::UnalignedAccess(a) => write!(f, "未アラインアクセス: 0x{a:08x}"),
             Self::MemoryViolation(a) => write!(f, "メモリアクセス違反: 0x{a:08x}"),
             Self::StepLimit(n) => write!(f, "実行ステップ上限（{n}）に到達しました"),
+            Self::DoubleFault {
+                first_cause,
+                second_cause,
+            } => write!(
+                f,
+                "double fault: first={first_cause:#x}, second={second_cause:#x}"
+            ),
         }
     }
 }
@@ -235,13 +266,21 @@ pub fn decode(word: u32, pc: u32) -> Result<Instruction, Fault> {
             rd: a,
             csr: word as u8,
         },
-        CSRW if word & 0x003f_ff00 == 0 => Instruction::CsrWrite {
+        CSRW | CSRSET | CSRCLR if word & 0x003f_ff00 == 0 => Instruction::CsrWrite {
             rs: a,
             csr: word as u8,
+            operation: match op {
+                CSRW => CsrOperation::Write,
+                CSRSET => CsrOperation::Set,
+                _ => CsrOperation::Clear,
+            },
         },
         ERET if word & 0x03ff_ffff == 0 => Instruction::Eret,
         ECALL if word & 0x03ff_ffff == 0 => Instruction::Ecall,
         WFI if word & 0x03ff_ffff == 0 => Instruction::Wfi,
+        _ if matches!(op, NOP | ADD..=WFI | CSRSET | CSRCLR) => {
+            return Err(Fault::ReservedEncoding { pc, word });
+        }
         _ => return Err(illegal()),
     })
 }
@@ -324,6 +363,9 @@ pub struct Cpu {
     uart_rx_control: u32,
     uart_rx_overrun: bool,
     waiting_for_interrupt: bool,
+    external_irq_pending: bool,
+    trap_active: bool,
+    trap_history: Vec<(u32, u32, u32)>,
     trace: bool,
     trace_interrupts: bool,
     trace_syscalls: bool,
@@ -352,6 +394,9 @@ impl Cpu {
             uart_rx_control: 0,
             uart_rx_overrun: false,
             waiting_for_interrupt: false,
+            external_irq_pending: false,
+            trap_active: false,
+            trap_history: Vec::new(),
             trace,
             trace_interrupts: false,
             trace_syscalls: false,
@@ -375,6 +420,15 @@ impl Cpu {
             }
         }
         self.update_pending();
+    }
+
+    pub fn inject_external_irq(&mut self) {
+        self.external_irq_pending = true;
+        self.update_pending();
+    }
+
+    pub fn trap_history(&self) -> &[(u32, u32, u32)] {
+        &self.trap_history
     }
 
     pub fn queue_uart_input(&mut self, bytes: &[u8]) {
@@ -533,7 +587,9 @@ impl Cpu {
         } else {
             *pending &= !interrupt::TIMER;
         }
-        if self.uart_rx_control & 1 != 0 && !self.uart_input.is_empty() {
+        if self.external_irq_pending
+            || (self.uart_rx_control & 1 != 0 && !self.uart_input.is_empty())
+        {
             *pending |= interrupt::UART_RX;
         } else {
             *pending &= !interrupt::UART_RX;
@@ -575,6 +631,8 @@ impl Cpu {
         self.csrs.values[csr::BADADDR as usize] = badaddr;
         self.pc = self.csrs.values[csr::TVEC as usize];
         self.waiting_for_interrupt = false;
+        self.trap_active = true;
+        self.trap_history.push((trap_cause, epc, badaddr));
         if self.trace_interrupts || self.trace_syscalls && trap_cause == cause::ECALL {
             eprintln!("trap cause={trap_cause} epc=0x{epc:08x} badaddr=0x{badaddr:08x}");
         }
@@ -589,6 +647,11 @@ impl Cpu {
     ) -> Result<Option<StopReason>, Fault> {
         if self.csrs.values[csr::TVEC as usize] == 0 {
             Err(fault)
+        } else if self.trap_active {
+            Err(Fault::DoubleFault {
+                first_cause: self.csrs.values[csr::CAUSE as usize],
+                second_cause: trap_cause,
+            })
         } else {
             self.enter_trap(trap_cause, epc, badaddr);
             Ok(None)
@@ -637,7 +700,12 @@ impl Cpu {
         let instruction = match decode(word, instruction_pc) {
             Ok(instruction) => instruction,
             Err(fault) => {
-                return self.trap_or_fault(cause::ILLEGAL_INSTRUCTION, instruction_pc, word, fault);
+                let trap_cause = if matches!(fault, Fault::ReservedEncoding { .. }) {
+                    cause::RESERVED_ENCODING
+                } else {
+                    cause::ILLEGAL_INSTRUCTION
+                };
+                return self.trap_or_fault(trap_cause, instruction_pc, word, fault);
             }
         };
         if self.trace {
@@ -729,7 +797,12 @@ impl Cpu {
                 self.pc = self.pc.wrapping_add((offset as u32) << 2);
             }
             Instruction::Ret => self.pc = self.registers[14],
-            Instruction::Halt => return Ok(Some(StopReason::Halt)),
+            Instruction::Halt => {
+                if !self.kernel_mode() {
+                    return self.privileged_fault(instruction_pc, word);
+                }
+                return Ok(Some(StopReason::Halt));
+            }
             Instruction::CsrRead { rd, csr: number } => {
                 if !self.kernel_mode()
                     && !matches!(number, csr::TIMER_COUNT_LO | csr::TIMER_COUNT_HI)
@@ -749,11 +822,48 @@ impl Cpu {
                 };
                 self.set_reg(rd, value);
             }
-            Instruction::CsrWrite { rs, csr: number } => {
+            Instruction::CsrWrite {
+                rs,
+                csr: number,
+                operation,
+            } => {
                 if !self.kernel_mode() {
                     return self.privileged_fault(instruction_pc, word);
                 }
-                if !self.csrs.write(number, self.registers[rs]) {
+                let operand = self.registers[rs];
+                let value = match operation {
+                    CsrOperation::Write => operand,
+                    CsrOperation::Set | CsrOperation::Clear => {
+                        if matches!(
+                            number,
+                            csr::CAUSE
+                                | csr::BADADDR
+                                | csr::TIMER_COUNT_LO
+                                | csr::TIMER_COUNT_HI
+                                | csr::INTERRUPT_PENDING
+                        ) {
+                            return self.trap_or_fault(
+                                cause::ILLEGAL_INSTRUCTION,
+                                instruction_pc,
+                                word,
+                                Fault::IllegalInstruction {
+                                    pc: instruction_pc,
+                                    word,
+                                },
+                            );
+                        }
+                        let old = self.csrs.read(number).unwrap_or(0);
+                        if operation == CsrOperation::Set {
+                            old | operand
+                        } else {
+                            old & !operand
+                        }
+                    }
+                };
+                if number == csr::INTERRUPT_PENDING && operand & interrupt::UART_RX != 0 {
+                    self.external_irq_pending = false;
+                }
+                if !self.csrs.write(number, value) {
                     return self.trap_or_fault(
                         cause::ILLEGAL_INSTRUCTION,
                         instruction_pc,
@@ -784,6 +894,7 @@ impl Cpu {
                 next |= status::PREVIOUS_PRIVILEGED;
                 self.csrs.values[csr::STATUS as usize] = next;
                 self.pc = self.csrs.values[csr::EPC as usize];
+                self.trap_active = false;
             }
             Instruction::Ecall => {
                 if self.trace_syscalls {
@@ -793,7 +904,11 @@ impl Cpu {
                     );
                 }
                 return self.trap_or_fault(
-                    cause::ECALL,
+                    if self.kernel_mode() {
+                        cause::ECALL
+                    } else {
+                        cause::USER_ECALL
+                    },
                     self.pc,
                     0,
                     Fault::IllegalInstruction {
@@ -802,7 +917,12 @@ impl Cpu {
                     },
                 );
             }
-            Instruction::Wfi => self.waiting_for_interrupt = true,
+            Instruction::Wfi => {
+                if !self.kernel_mode() {
+                    return self.privileged_fault(instruction_pc, word);
+                }
+                self.waiting_for_interrupt = true;
+            }
         }
         self.registers[0] = 0;
         self.update_pending();
@@ -866,6 +986,10 @@ mod tests {
         (opcode::CSRW as u32) << 26 | rs << 22 | number as u32
     }
 
+    fn csr_op(op: u8, number: u8, rs: u32) -> u32 {
+        (op as u32) << 26 | rs << 22 | number as u32
+    }
+
     #[test]
     fn 算術論理とr0固定を実行する() {
         use opcode::*;
@@ -914,7 +1038,7 @@ mod tests {
     fn tvec未設定では従来faultを返す() {
         assert!(matches!(
             Cpu::new(&image(&[1]), false).unwrap().step(),
-            Err(Fault::IllegalInstruction { .. })
+            Err(Fault::ReservedEncoding { .. })
         ));
         let code = image(&[
             movi(1, RAM_BASE as i32 + 1),
@@ -1028,5 +1152,95 @@ mod tests {
         assert_eq!(cpu.registers[3], cause::STORE_ACCESS);
         assert_eq!(cpu.registers[4], UART_TX);
         assert!(cpu.uart_output.is_empty());
+    }
+
+    #[test]
+    fn csrsetとcsrclrを原子的に適用する() {
+        let code = image(&[
+            movi(1, 3),
+            csr_op(opcode::CSRSET, csr::INTERRUPT_ENABLE, 1),
+            movi(1, 1),
+            csr_op(opcode::CSRCLR, csr::INTERRUPT_ENABLE, 1),
+            csrr(2, csr::INTERRUPT_ENABLE),
+            (opcode::HALT as u32) << 26,
+        ]);
+        let mut cpu = Cpu::new(&code, false).unwrap();
+        assert_eq!(cpu.run(20), Ok(StopReason::Halt));
+        assert_eq!(cpu.registers[2], 2);
+    }
+
+    #[test]
+    fn user_modeのhaltとwfiを拒否する() {
+        for op in [opcode::HALT, opcode::WFI] {
+            let mut words = vec![0; 16];
+            words[8] = (op as u32) << 26;
+            words[12] = csrr(3, csr::CAUSE);
+            words[13] = (opcode::HALT as u32) << 26;
+            let mut cpu = Cpu::new(&image(&words), false).unwrap();
+            cpu.pc = 0x20;
+            cpu.set_csr_for_test(csr::TVEC, 0x30);
+            cpu.set_csr_for_test(csr::USER_BASE, 0x20);
+            cpu.set_csr_for_test(csr::USER_LIMIT, 0x30);
+            cpu.set_csr_for_test(csr::STATUS, 0);
+            assert_eq!(cpu.run(20), Ok(StopReason::Halt));
+            assert_eq!(cpu.registers[3], cause::PRIVILEGED_INSTRUCTION);
+        }
+    }
+
+    #[test]
+    fn user_ecallは次命令epcと専用causeを保存する() {
+        let mut words = vec![0; 16];
+        words[8] = (opcode::ECALL as u32) << 26;
+        words[12] = csrr(3, csr::CAUSE);
+        words[13] = csrr(4, csr::EPC);
+        words[14] = (opcode::HALT as u32) << 26;
+        let mut cpu = Cpu::new(&image(&words), false).unwrap();
+        cpu.pc = 0x20;
+        cpu.set_csr_for_test(csr::TVEC, 0x30);
+        cpu.set_csr_for_test(csr::USER_BASE, 0x20);
+        cpu.set_csr_for_test(csr::USER_LIMIT, 0x30);
+        cpu.set_csr_for_test(csr::STATUS, 0);
+        assert_eq!(cpu.run(20), Ok(StopReason::Halt));
+        assert_eq!(cpu.registers[3], cause::USER_ECALL);
+        assert_eq!(cpu.registers[4], 0x24);
+    }
+
+    #[test]
+    fn external_irqでwfiを解除する() {
+        let mut words = vec![
+            movi(1, 0x40),
+            csrw(csr::TVEC, 1),
+            movi(1, 2),
+            csrw(csr::INTERRUPT_ENABLE, 1),
+            movi(1, 5),
+            csrw(csr::STATUS, 1),
+            (opcode::WFI as u32) << 26,
+            movi(2, 77),
+            (opcode::HALT as u32) << 26,
+        ];
+        words.resize(16, 0);
+        words.extend([
+            csrr(3, csr::CAUSE),
+            movi(1, 2),
+            csrw(csr::INTERRUPT_PENDING, 1),
+            (opcode::ERET as u32) << 26,
+        ]);
+        let mut cpu = Cpu::new(&image(&words), false).unwrap();
+        for _ in 0..7 {
+            cpu.step().unwrap();
+        }
+        cpu.inject_external_irq();
+        assert_eq!(cpu.run(40), Ok(StopReason::Halt));
+        assert_eq!(cpu.registers[2], 77);
+        assert_eq!(cpu.registers[3], cause::EXTERNAL_INTERRUPT);
+    }
+
+    #[test]
+    fn trap中の同期例外をdouble_faultにする() {
+        let mut words = vec![movi(1, 0x20), csrw(csr::TVEC, 1), 0xffff_ffff];
+        words.resize(8, 0);
+        words.push(0xffff_ffff);
+        let mut cpu = Cpu::new(&image(&words), false).unwrap();
+        assert!(matches!(cpu.run(20), Err(Fault::DoubleFault { .. })));
     }
 }

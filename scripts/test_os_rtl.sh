@@ -3,7 +3,7 @@ set -eu
 
 sh scripts/build_os_image.sh
 mkdir -p build
-sources="rtl/alu.sv rtl/register_file.sv rtl/decoder.sv rtl/timer.sv rtl/interrupt_controller.sv rtl/csr_file.sv rtl/cpu_indigo.sv rtl/memory_map_indigo.sv rtl/uart_rx.sv sim/os_tb.sv"
+sources="rtl/alu.sv rtl/register_file.sv rtl/decoder.sv rtl/timer.sv rtl/interrupt_controller.sv rtl/csr_file.sv rtl/protection_unit.sv rtl/cpu_indigo.sv rtl/memory_map_indigo.sv rtl/uart_rx.sv sim/os_tb.sv"
 verilator --binary --timing -Wno-fatal --top-module os_tb \
     --Mdir build/obj_os -o os_tb $sources
 build/obj_os/os_tb +MEM=build/indigo-os.mem +INPUT=tests/input/shell.txt +OUTPUT=build/os-rtl.out

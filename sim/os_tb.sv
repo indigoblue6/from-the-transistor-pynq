@@ -14,8 +14,11 @@ module os_tb;
     logic [31:0] debug_pc, debug_instruction, debug_register_data;
     logic [3:0] debug_state, debug_register_index;
     logic debug_register_write, debug_privileged, debug_interrupt_taken;
+    logic debug_trap_valid, debug_timer_interrupt, debug_external_interrupt;
+    logic debug_unrecoverable_fault, external_irq = 1'b0;
     logic [2:0] debug_interrupt_pending, debug_interrupt_enable;
     logic [31:0] debug_epc, debug_cause, debug_badaddr, debug_timer_count;
+    logic [31:0] debug_kernel_sp;
     string memory_file, input_file, output_file;
     integer input_descriptor, output_descriptor, character, cycles;
 
@@ -27,14 +30,19 @@ module os_tb;
         .data_valid(data_valid), .data_write(data_write), .data_byte(data_byte),
         .data_address(data_address), .data_write_data(data_write_data),
         .data_read_data(data_read_data), .data_fault(data_fault),
-        .uart_rx_pending(uart_rx_interrupt_request), .halted(halted), .faulted(faulted),
+        .uart_rx_pending(uart_rx_interrupt_request), .external_irq(external_irq),
+        .halted(halted), .faulted(faulted),
         .debug_pc(debug_pc), .debug_instruction(debug_instruction), .debug_state(debug_state),
         .debug_register_write(debug_register_write), .debug_register_index(debug_register_index),
         .debug_register_data(debug_register_data), .debug_privileged(debug_privileged),
         .debug_interrupt_pending(debug_interrupt_pending),
         .debug_interrupt_enable(debug_interrupt_enable), .debug_epc(debug_epc),
         .debug_cause(debug_cause), .debug_badaddr(debug_badaddr),
-        .debug_timer_count(debug_timer_count), .debug_interrupt_taken(debug_interrupt_taken)
+        .debug_timer_count(debug_timer_count), .debug_interrupt_taken(debug_interrupt_taken),
+        .debug_trap_valid(debug_trap_valid), .debug_timer_interrupt(debug_timer_interrupt),
+        .debug_external_interrupt(debug_external_interrupt),
+        .debug_unrecoverable_fault(debug_unrecoverable_fault),
+        .debug_kernel_sp(debug_kernel_sp)
     );
 
     memory_map memory_i (

@@ -1,5 +1,8 @@
 # 開発ロードマップ
 
+Linuxおよびcapability対応までの現行ロードマップと各phaseの完了条件は
+[Linux port roadmap](linux-port-roadmap.md)を正とする。
+
 ## コンパイラ基盤
 
 1. データRAM初期化イメージと独自オブジェクト形式を定義する。

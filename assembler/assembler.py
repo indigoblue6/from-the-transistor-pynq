@@ -19,7 +19,7 @@ OPCODES = {
     "beq": 0x10, "bne": 0x11, "blt": 0x12, "bge": 0x13,
     "jmp": 0x14, "call": 0x15, "ret": 0x16, "halt": 0x17,
     "csrr": 0x18, "csrw": 0x19, "eret": 0x1A, "ecall": 0x1B,
-    "wfi": 0x1C,
+    "wfi": 0x1C, "csrset": 0x1D, "csrclr": 0x1E,
 }
 R_OPS = {"add", "sub", "and", "or", "xor", "shl", "shr", "sar"}
 I_OPS = {"addi", "load", "store", "loadb", "storeb"}
@@ -70,13 +70,13 @@ def parse_register(token: str, line: SourceLine) -> int:
 
 
 def parse_csr(token: str, symbols: dict[str, int], line: SourceLine) -> int:
-    """CSR名または8 bit番号を解決する。"""
+    """実装済みCSR名または番号を解決する。予約番号は拒否する。"""
     key = token.lower()
     if key in CSRS:
         return CSRS[key]
     value = parse_value(token, symbols, line)
-    if not 0 <= value <= 0xFF:
-        raise fail(line, f"CSR番号 {value} は8 bitに収まりません")
+    if value not in CSRS.values():
+        raise fail(line, f"CSR番号 {value} は未実装または予約済みです")
     return value
 
 
@@ -192,8 +192,8 @@ def encode_instruction(line: SourceLine, symbols: dict[str, int]) -> list[int]:
         rd = parse_register(tokens[1], line)
         csr = parse_csr(tokens[2], symbols, line)
         return [opcode | (rd << 22) | csr]
-    if op == "csrw":
-        count(3, "csrw csr, rs")
+    if op in {"csrw", "csrset", "csrclr"}:
+        count(3, f"{op} csr, rs")
         csr = parse_csr(tokens[1], symbols, line)
         rs = parse_register(tokens[2], line)
         return [opcode | (rs << 22) | csr]

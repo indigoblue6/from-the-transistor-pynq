@@ -11,7 +11,8 @@ _start:
     mcr p15, 0, r0, c1, c0, 0
     dsb
     isb
-    ldr sp, =0x0003fff0
+    /* 低位OCMは0x00000000～0x0002ffff。上端から16 byte下へ配置する。 */
+    ldr sp, =0x0002fff0
     bl main
 1:
     b 1b

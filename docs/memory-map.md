@@ -1,22 +1,16 @@
 # メモリマップ
 
-| アドレス | サイズ | 用途 |
-|---|---:|---|
-| `0x00000000`-`0x00003fff` | 16 KiB | 命令ROM / BRAM |
-| `0x00004000`-`0x0000ffff` | 48 KiB | データRAM / BRAM |
-| `0x80000000` | 4 byte | `UART_TX` |
-| `0x80000004` | 4 byte | `UART_STATUS` |
-| `0x80001000` | 4 byte | `SIM_EXIT` |
+| アドレス | 用途 | User |
+|---|---|---|
+| `0x00000000–0x00001fff` | Kernel instruction ROM | 不可 |
+| `0x00002000–0x00003fff` | scheduler demo User code | 可 |
+| `0x00004000–0x00007fff` | demo User data/stack | 可 |
+| `0x00008000–0x0000ffff` | Kernel data/TCB/kernel stack | 不可 |
+| `0x80000000` | UART_TX | 不可 |
+| `0x80000004` | UART_STATUS | 不可 |
+| `0x80000008–0x80000010` | UART RX data/status/control | 不可 |
+| `0x80001000` | SIM_EXIT | 不可 |
 
-第1フェーズはHarvard構成とし、命令フェッチは命令ROMだけ、データアクセスはRAMと
-MMIOだけを使用する。`UART_TX`へのbyteまたはword書き込みは下位8 bitを送信する。
-`UART_STATUS`読み出しは常にbit 0が1（送信可能）で、書き込みはfaultとする。
-`SIM_EXIT`への書き込みはエミュレータまたはシミュレーションを終了する。値0を成功、
-非0をテスト失敗として扱う。FPGA実機での動作は規定しない。
-
-複数byte値はリトルエンディアンであり、wordアクセスは4 byte境界を要求する。
-未割り当て領域へのアクセスはfaultになる。実機UARTはMMIOの送信ストローブ以降を
-独立した合成可能モジュールで直列化し、シミュレーション表示はテストベンチが行う。
-
-将来は`0x80000100`付近をタイマー、`0x80000200`付近をGPIO用に予約するが、現時点では
-アクセスするとfaultになる。
+物理実装は16 KiB instruction BRAMと48 KiB data BRAMのHarvard構成である。上表の細分は
+scheduler imageの`USER_BASE=0x2000, USER_LIMIT=0x8000`による論理保護である。通常サンプルと
+既存IndigoOS shellは従来配置を維持する。wordは4 byte整列、little endianである。

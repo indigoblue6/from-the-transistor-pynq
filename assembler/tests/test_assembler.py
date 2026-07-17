@@ -50,12 +50,16 @@ def test_エラーに行番号を含む():
 
 def test_csr_and_trap_instructions():
     data = assemble(
-        "csrr r3, status\ncsrw tvec, r4\neret\necall\nwfi\n"
+        "csrr r3, status\ncsrw tvec, r4\n"
+        "csrset interrupt_enable, r5\ncsrclr status, r6\n"
+        "eret\necall\nwfi\n"
     )
-    words = struct.unpack("<5I", data)
+    words = struct.unpack("<7I", data)
     assert words == (
         (0x18 << 26) | (3 << 22),
         (0x19 << 26) | (4 << 22) | 3,
+        (0x1D << 26) | (5 << 22) | 0x0A,
+        (0x1E << 26) | (6 << 22),
         0x1A << 26,
         0x1B << 26,
         0x1C << 26,
@@ -67,3 +71,9 @@ def test_invalid_csr_number_reports_line():
         assemble("csrr r1, 0x100\n")
     assert "1行目" in str(error.value)
     assert "CSR番号" in str(error.value)
+
+
+@pytest.mark.parametrize("number", ["0x10", "0x7f", "0xff"])
+def test_予約csr番号を拒否する(number):
+    with pytest.raises(AsmError, match="未実装または予約済み"):
+        assemble(f"csrr r1, {number}\n")

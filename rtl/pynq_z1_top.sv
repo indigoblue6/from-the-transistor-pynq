@@ -35,6 +35,11 @@ module pynq_z1_top (
     (* mark_debug = "true" *) logic [31:0] epc_debug, cause_debug, badaddr_debug;
     (* mark_debug = "true" *) logic [31:0] timer_count_debug;
     (* mark_debug = "true" *) logic interrupt_taken_debug;
+    (* mark_debug = "true" *) logic trap_valid_debug, timer_interrupt_debug;
+    (* mark_debug = "true" *) logic external_interrupt_debug, unrecoverable_fault_debug;
+    (* mark_debug = "true" *) logic [31:0] kernel_sp_debug;
+    (* mark_debug = "true" *) logic [1:0] current_task_id_debug;
+    (* mark_debug = "true" *) logic trap_history_debug = 1'b0;
     logic uart_ready;
     logic uart_fifo_input_ready, uart_fifo_valid;
     logic [7:0] uart_fifo_data;
@@ -48,7 +53,9 @@ module pynq_z1_top (
     logic [1:0] prog_uart_rx_toggle_sync;
     logic [7:0] prog_uart_rx_data;
     logic [31:0] heartbeat = 32'b0;
-    logic [31:0] unused_debug_pc, unused_debug_instruction, unused_debug_register_data;
+    (* mark_debug = "true" *) logic [31:0] unused_debug_pc;
+    (* mark_debug = "true" *) logic [31:0] unused_debug_instruction;
+    logic [31:0] unused_debug_register_data;
     logic [3:0] unused_debug_state, unused_debug_register_index;
     logic unused_debug_register_write;
     logic cpu_clk, cpu_clk_unbuffered, mmcm_feedback, mmcm_locked;
@@ -72,13 +79,19 @@ module pynq_z1_top (
     end
     always_ff @(posedge cpu_clk) begin
         heartbeat <= heartbeat + 1'b1;
+        if (reset)
+            trap_history_debug <= 1'b0;
+        else if (trap_valid_debug)
+            trap_history_debug <= 1'b1;
         if (uart_fifo_valid && uart_ready)
             uart_history <= {uart_history[127:0], uart_fifo_data};
     end
     assign reset = reset_button || !mmcm_locked || (reset_counter != 0);
-    assign hardware_done = halted_internal && !uart_fifo_valid && uart_ready &&
-        !prog_uart_fifo_valid && !prog_uart_mailbox_pending;
-    assign led = {heartbeat[24], uart_ready, faulted_internal, halted_internal};
+    assign hardware_done = halted_internal && !uart_fifo_valid && uart_ready;
+    assign current_task_id_debug = kernel_sp_debug == 32'h0000_90cc ? 2'd1 :
+        (kernel_sp_debug == 32'h0000_914c ? 2'd2 : 2'd0);
+    assign led = {unrecoverable_fault_debug, !current_privileged,
+                  trap_history_debug, !reset};
 
     // EMIO GPIO 0～7は文字、8は送信トグル、9はPSからのackとして使う。
     // 16～24はPSからの受信文字とトグル、25はPLからのackとして使う。
@@ -138,7 +151,7 @@ module pynq_z1_top (
         .data_address(data_address), .data_write_data(data_write_data),
         .data_read_data(data_read_data), .data_fault(data_fault),
         .uart_rx_pending(uart_rx_interrupt_request || jtag_rx_available ||
-            prog_uart_rx_available),
+            prog_uart_rx_available), .external_irq(1'b0),
         .halted(halted_internal), .faulted(faulted_internal),
         .debug_pc(unused_debug_pc), .debug_instruction(unused_debug_instruction),
         .debug_state(unused_debug_state), .debug_register_write(unused_debug_register_write),
@@ -147,7 +160,11 @@ module pynq_z1_top (
         .debug_interrupt_pending(interrupt_pending_debug),
         .debug_interrupt_enable(interrupt_enable_debug), .debug_epc(epc_debug),
         .debug_cause(cause_debug), .debug_badaddr(badaddr_debug),
-        .debug_timer_count(timer_count_debug), .debug_interrupt_taken(interrupt_taken_debug)
+        .debug_timer_count(timer_count_debug), .debug_interrupt_taken(interrupt_taken_debug),
+        .debug_trap_valid(trap_valid_debug), .debug_timer_interrupt(timer_interrupt_debug),
+        .debug_external_interrupt(external_interrupt_debug),
+        .debug_unrecoverable_fault(unrecoverable_fault_debug),
+        .debug_kernel_sp(kernel_sp_debug)
     );
     vio_0 vio_i (
         .clk(cpu_clk), .probe_in0(jtag_host_out_debug), .probe_out0(jtag_host_in_debug)
@@ -185,7 +202,7 @@ module pynq_z1_top (
         .interrupt_enable(uart_rx_interrupt_enable),
         .interrupt_request(uart_rx_interrupt_request)
     );
-    uart_fifo uart_fifo_i (
+    uart_fifo #(.DEPTH_LOG2(8)) uart_fifo_i (
         .clk(cpu_clk), .reset(reset), .input_valid(uart_valid), .input_data(uart_data),
         .input_ready(uart_fifo_input_ready), .output_valid(uart_fifo_valid),
         .output_data(uart_fifo_data), .output_ready(uart_ready)

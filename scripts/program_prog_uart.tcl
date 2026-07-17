@@ -13,6 +13,8 @@ targets -set -nocase -filter {name =~ "*Cortex-A9*#1"}
 stop
 targets -set -nocase -filter {name =~ "*Cortex-A9*#0"}
 stop
+# Boot ROMや例外handlerのモードを引き継がず、SVC modeからbridgeを開始する。
+rst -processor
 dow [file join $root build ps_uart_bridge bridge.elf]
 con
 after 1500

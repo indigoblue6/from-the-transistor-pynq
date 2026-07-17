@@ -1,27 +1,21 @@
-# 初期ABI
+# Indigo32 ABI
 
-## レジスタ用途
+## 通常関数ABI
 
-| レジスタ | 用途 | 保存規則 |
-|---|---|---|
-| `r0` | 定数0 | 変更不可 |
-| `r1` | 戻り値 | caller-saved |
-| `r2`-`r5` | 第1〜第4引数 | caller-saved |
-| `r6`-`r10` | 一時レジスタ | caller-saved |
-| `r11`-`r13` | 保存レジスタ | callee-saved |
-| `r14` | リンクレジスタ | 非leaf関数が保存 |
-| `r15` | スタックポインタ | calleeが復元 |
+r0は定数0、r1は戻り値、r2–r5は第1–第4引数、r6–r10はcaller-saved、r11–r13は
+callee-saved、r14はlink register、r15はstack pointerである。stackは下向き、4 byte整列とする。
+既存CALL/RETとPynqC ABIは変更しない。
 
-32 bitスカラー引数4個までを`r2`〜`r5`、スカラー戻り値を`r1`で渡す。
-5個目以降の引数、構造体、複数word戻り値は第1フェーズでは未定義である。
+## syscall ABI
 
-## 呼び出しとスタック
+Userはr1へ番号、r2–r5へ引数を置いてECALLする。返値は保存frameのr1へ書かれ、負値はerrnoである。
+User ECALLのEPCはhardwareが次命令へ進める。
 
-`CALL`は次命令のアドレスを`r14`へ設定する。`RET`は`r14`をPCへ設定する。
-leaf関数は`r14`を保存しなくてよい。別関数を呼ぶ関数は、受け取った`r14`を
-スタックフレームへ保存して`RET`前に復元する。これにより再帰呼び出しも可能になる。
+| 番号 | 名称 | 引数 | 戻り値 |
+|---:|---|---|---|
+| 1 | SYS_WRITE_CHAR | r2=文字 | 0 |
+| 2 | SYS_YIELD | なし | 0 |
+| 3 | SYS_EXIT | r2=exit code | 復帰しない |
+| 4 | SYS_GET_TICKS | なし | timer tick |
 
-初期スタックポインタはRAM終端の次である`0x00010000`とし、高位から低位へ伸びる。
-フレーム確保時は`r15`からサイズを減算し、解放時に加算する。第1フェーズでは
-4 byteアラインメントを維持する。calleeは使用した`r11`〜`r13`を保存・復元する。
-callerは`r1`〜`r10`と`r14`が破壊されるものとして扱う。
+UserからUART MMIOを直接操作できない。trap frameは[context-switch.md](context-switch.md)を参照する。

@@ -21,6 +21,16 @@ after_illegal:
     li r1, after_illegal
     bne r12, r1, fail
 
+    ; 既知opcodeの予約bit違反は専用CAUSE 13とする。
+    movi r10, 12
+reserved_encoding:
+    .word 0x00000001
+after_reserved:
+    movi r1, 13
+    bne r11, r1, fail
+    li r1, after_reserved
+    bne r12, r1, fail
+
     ; faultしたLOADは宛先を書き換えない。
     movi r10, 3
     li r1, 0x00004001
@@ -60,7 +70,25 @@ after_store_fault:
     csrw status, r1
     wfi
 after_wfi:
-    movi r1, 8
+    li r1, 0x80000008
+    bne r11, r1, fail
+    ; CSRSET/CSRCLRは読み書きを一命令で行う。
+    movi r1, 3
+    csrset interrupt_enable, r1
+    movi r1, 1
+    csrclr interrupt_enable, r1
+    csrr r2, interrupt_enable
+    movi r3, 2
+    bne r2, r3, fail
+
+    ; 外部割り込みでWFIを解除する。
+    movi r10, 8
+    movi r1, 2
+    csrw interrupt_enable, r1
+    movi r1, 5
+    csrw status, r1
+    wfi
+    li r1, 0x80000009
     bne r11, r1, fail
     movi r1, 4
     csrw status, r1
@@ -111,6 +139,16 @@ handler:
     beq r10, r1, handler_user_csr
     movi r1, 7
     beq r10, r1, handler_user_mmio
+    movi r1, 8
+    beq r10, r1, handler_external
+    movi r1, 9
+    beq r10, r1, handler_user_halt
+    movi r1, 10
+    beq r10, r1, handler_user_wfi
+    movi r1, 11
+    beq r10, r1, handler_user_ecall
+    movi r1, 12
+    beq r10, r1, handler_skip
     jmp fail
 
 handler_skip:
@@ -132,11 +170,42 @@ handler_user_csr:
     csrw epc, r1
     eret
 
+handler_external:
+    movi r1, 2
+    csrw interrupt_pending, r1
+    eret
+
 handler_user_mmio:
     movi r1, 6
     bne r11, r1, fail
     li r1, 0x80000000
     bne r13, r1, fail
+    movi r10, 9
+    li r1, user_halt
+    csrw epc, r1
+    eret
+
+handler_user_halt:
+    movi r1, 11
+    bne r11, r1, fail
+    movi r10, 10
+    li r1, user_wfi
+    csrw epc, r1
+    eret
+
+handler_user_wfi:
+    movi r1, 11
+    bne r11, r1, fail
+    movi r10, 11
+    li r1, user_ecall
+    csrw epc, r1
+    eret
+
+handler_user_ecall:
+    movi r1, 12
+    bne r11, r1, fail
+    li r1, user_after_ecall
+    bne r12, r1, fail
     li r1, kernel_done
     csrw epc, r1
     movi r1, 12
@@ -152,5 +221,12 @@ user_mmio:
     li r1, 0x80000000
     movi r2, 88
     storeb r2, [r1 + 0]
+user_halt:
+    halt
+user_wfi:
+    wfi
+user_ecall:
+    ecall
+user_after_ecall:
 user_end:
     nop
